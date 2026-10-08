@@ -9,13 +9,15 @@ const getTransporter = () => {
   const user = (process.env.SMTP_USER || '').trim();
   const pass = (process.env.SMTP_PASS || '').trim();
 
+  console.log(`🔧 [Mailer] Creating transporter: host=${host}, user=${user ? user.substring(0, 5) + '***' : 'EMPTY'}, pass=${pass ? '***SET***' : 'EMPTY'}`);
+
   if (host.includes('gmail.com') || user.includes('gmail.com')) {
     return nodemailer.createTransport({
       service: 'gmail',
       auth: user && pass ? { user, pass } : undefined,
-      connectionTimeout: 5000,
-      socketTimeout: 5000,
-      greetingTimeout: 5000
+      connectionTimeout: 15000,
+      socketTimeout: 15000,
+      greetingTimeout: 15000
     });
   }
 
@@ -28,9 +30,9 @@ const getTransporter = () => {
     tls: {
       rejectUnauthorized: false
     },
-    connectionTimeout: 5000,
-    socketTimeout: 5000,
-    greetingTimeout: 5000
+    connectionTimeout: 15000,
+    socketTimeout: 15000,
+    greetingTimeout: 15000
   });
 };
 
@@ -82,7 +84,7 @@ export const sendEmail = async ({ to, subject, html, text }) => {
     });
 
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('SMTP Connection Timeout (6s)')), 6000)
+      setTimeout(() => reject(new Error('SMTP Connection Timeout (20s)')), 20000)
     );
 
     const info = await Promise.race([emailPromise, timeoutPromise]);
