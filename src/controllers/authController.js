@@ -73,9 +73,7 @@ export const requestRegistrationOtp = async (req, res) => {
 
     return res.status(200).json({
       status: 'success',
-      message: `OTP sent successfully${email ? ' to email ' + email : ''}.`,
-      // For development convenience:
-      debug_otp: process.env.NODE_ENV !== 'production' ? otp : undefined
+      message: `OTP sent successfully${email ? ' to email ' + email : ''}.`
     });
   } catch (error) {
     console.error('Request OTP Error:', error);
@@ -481,8 +479,7 @@ export const requestForgotPasswordOtp = async (req, res) => {
 
     return res.status(200).json({
       status: 'success',
-      message: `Password reset OTP aapki email (${user.email}) par bhej diya gaya hai. Ye OTP 15 minute ke liye valid hai.`,
-      debug_otp: process.env.NODE_ENV !== 'production' ? otp : undefined
+      message: `Password reset OTP aapki email (${user.email}) par bhej diya gaya hai. Ye OTP 15 minute ke liye valid hai.`
     });
   } catch (error) {
     console.error('Request Forgot Password OTP Error:', error);
