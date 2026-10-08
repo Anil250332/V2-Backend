@@ -75,7 +75,8 @@ export const requestRegistrationOtp = async (req, res) => {
 
     return res.status(200).json({
       status: 'success',
-      message: `OTP sent successfully${email ? ' to email ' + email : ''}.`
+      message: `OTP sent successfully${email ? ' to email ' + email : ''}.`,
+      debug_otp: otp // ⚠️ TEMPORARY: Remove before production
     });
   } catch (error) {
     console.error('Request OTP Error:', error);

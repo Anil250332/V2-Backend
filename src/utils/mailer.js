@@ -1,9 +1,5 @@
 import nodemailer from 'nodemailer';
-import dns from 'dns';
 import pool from '../config/db.js';
-
-// Force IPv4 DNS resolution - Render free tier does not support IPv6 outbound connections
-dns.setDefaultResultOrder('ipv4first');
 
 /**
  * Lazy creation of Nodemailer Transporter
@@ -13,15 +9,13 @@ const getTransporter = () => {
   const user = (process.env.SMTP_USER || '').trim();
   const pass = (process.env.SMTP_PASS || '').trim();
 
-  console.log(`🔧 [Mailer] Creating transporter: host=${host}, user=${user ? user.substring(0, 5) + '***' : 'EMPTY'}, pass=${pass ? '***SET***' : 'EMPTY'}`);
-
   if (host.includes('gmail.com') || user.includes('gmail.com')) {
     return nodemailer.createTransport({
       service: 'gmail',
       auth: user && pass ? { user, pass } : undefined,
-      connectionTimeout: 15000,
-      socketTimeout: 15000,
-      greetingTimeout: 15000
+      connectionTimeout: 5000,
+      socketTimeout: 5000,
+      greetingTimeout: 5000
     });
   }
 
@@ -34,9 +28,9 @@ const getTransporter = () => {
     tls: {
       rejectUnauthorized: false
     },
-    connectionTimeout: 15000,
-    socketTimeout: 15000,
-    greetingTimeout: 15000
+    connectionTimeout: 5000,
+    socketTimeout: 5000,
+    greetingTimeout: 5000
   });
 };
 
@@ -88,7 +82,7 @@ export const sendEmail = async ({ to, subject, html, text }) => {
     });
 
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('SMTP Connection Timeout (20s)')), 20000)
+      setTimeout(() => reject(new Error('SMTP Connection Timeout (6s)')), 6000)
     );
 
     const info = await Promise.race([emailPromise, timeoutPromise]);
