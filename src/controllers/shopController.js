@@ -165,18 +165,18 @@ export const approveShop = async (req, res) => {
     const [users] = await connection.query('SELECT full_name, email, role FROM users WHERE id = ?', [id]);
 
     await connection.query(
-      'UPDATE users SET approval_status = "approved", is_active = true WHERE id = ?',
-      [id]
+      'UPDATE users SET approval_status = ?, is_active = true WHERE id = ?',
+      ['approved', id]
     );
 
     await connection.query(
-      'UPDATE shops SET status = "active" WHERE user_id = ? OR id = ?',
-      [id, id]
+      'UPDATE shops SET status = ? WHERE user_id = ? OR id = ?',
+      ['active', id, id]
     );
 
     await connection.query(
-      'UPDATE user_requests SET status = "rejected" WHERE target_user_id = ? AND request_type = "delete_agent" AND status = "pending"',
-      [id]
+      'UPDATE user_requests SET status = ? WHERE target_user_id = ? AND request_type = ? AND status = ?',
+      ['rejected', id, 'delete_agent', 'pending']
     );
 
     await connection.commit();
@@ -213,13 +213,13 @@ export const rejectShop = async (req, res) => {
     const [users] = await connection.query('SELECT full_name, email, role FROM users WHERE id = ?', [id]);
 
     await connection.query(
-      'UPDATE users SET approval_status = "rejected", is_active = false WHERE id = ?',
-      [id]
+      'UPDATE users SET approval_status = ?, is_active = false WHERE id = ?',
+      ['rejected', id]
     );
 
     await connection.query(
-      'UPDATE shops SET status = "rejected" WHERE user_id = ? OR id = ?',
-      [id, id]
+      'UPDATE shops SET status = ? WHERE user_id = ? OR id = ?',
+      ['rejected', id, id]
     );
 
     await connection.commit();

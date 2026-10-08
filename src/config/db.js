@@ -97,6 +97,14 @@ export const initDb = async () => {
       // Ignore if already correct
     }
 
+    // Ensure approval_status column exists in users table
+    try {
+      await rawConn.query(`
+        USE \`${dbConfig.database}\`;
+        ALTER TABLE users ADD COLUMN approval_status ENUM('pending', 'approved', 'rejected') DEFAULT 'approved';
+      `);
+    } catch (e) {}
+
     // Ensure applications table status column includes 'verified'
     try {
       await rawConn.query(`

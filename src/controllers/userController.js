@@ -240,20 +240,43 @@ export const toggleUserStatus = async (req, res) => {
  * PATCH /api/users/:id/approve
  */
 export const approveUser = async (req, res) => {
+  const connection = await pool.getConnection();
   try {
     const { id } = req.params;
+    await connection.beginTransaction();
 
-    const [users] = await pool.query('SELECT full_name, email, role FROM users WHERE id = ?', [id]);
-    await pool.query(
-      'UPDATE users SET approval_status = "approved", is_active = true WHERE id = ?',
-      [id]
-    );
+    const [users] = await connection.query('SELECT full_name, email, role FROM users WHERE id = ?', [id]);
+    if (users.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ status: 'error', message: 'User not found.' });
+    }
 
-    if (users.length > 0 && users[0].email) {
+    try {
+      await connection.query(
+        'UPDATE users SET approval_status = ?, is_active = true WHERE id = ?',
+        ['approved', id]
+      );
+    } catch (err) {
+      await connection.query(
+        'UPDATE users SET is_active = true WHERE id = ?',
+        [id]
+      );
+    }
+
+    try {
+      await connection.query(
+        'UPDATE shops SET status = ? WHERE user_id = ? OR id = ?',
+        ['active', id, id]
+      );
+    } catch (e) {}
+
+    await connection.commit();
+
+    if (users[0].email) {
       sendUserApprovalEmail({
         toEmail: users[0].email,
         name: users[0].full_name,
-        role: users[0].role,
+        role: users[0].role || 'operator',
         status: 'approved'
       }).catch(err => console.error('Approval email error:', err.message));
     }
@@ -263,8 +286,11 @@ export const approveUser = async (req, res) => {
       message: 'User approved and activated successfully!'
     });
   } catch (error) {
+    await connection.rollback();
     console.error('Approve User Error:', error);
     return res.status(500).json({ status: 'error', message: error.message });
+  } finally {
+    connection.release();
   }
 };
 
@@ -273,20 +299,43 @@ export const approveUser = async (req, res) => {
  * PATCH /api/users/:id/reject
  */
 export const rejectUser = async (req, res) => {
+  const connection = await pool.getConnection();
   try {
     const { id } = req.params;
+    await connection.beginTransaction();
 
-    const [users] = await pool.query('SELECT full_name, email, role FROM users WHERE id = ?', [id]);
-    await pool.query(
-      'UPDATE users SET approval_status = "rejected", is_active = false WHERE id = ?',
-      [id]
-    );
+    const [users] = await connection.query('SELECT full_name, email, role FROM users WHERE id = ?', [id]);
+    if (users.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ status: 'error', message: 'User not found.' });
+    }
 
-    if (users.length > 0 && users[0].email) {
+    try {
+      await connection.query(
+        'UPDATE users SET approval_status = ?, is_active = false WHERE id = ?',
+        ['rejected', id]
+      );
+    } catch (err) {
+      await connection.query(
+        'UPDATE users SET is_active = false WHERE id = ?',
+        [id]
+      );
+    }
+
+    try {
+      await connection.query(
+        'UPDATE shops SET status = ? WHERE user_id = ? OR id = ?',
+        ['rejected', id, id]
+      );
+    } catch (e) {}
+
+    await connection.commit();
+
+    if (users[0].email) {
       sendUserApprovalEmail({
         toEmail: users[0].email,
         name: users[0].full_name,
-        role: users[0].role,
+        role: users[0].role || 'operator',
         status: 'rejected'
       }).catch(err => console.error('Rejection email error:', err.message));
     }
@@ -296,8 +345,11 @@ export const rejectUser = async (req, res) => {
       message: 'User registration request rejected.'
     });
   } catch (error) {
+    await connection.rollback();
     console.error('Reject User Error:', error);
     return res.status(500).json({ status: 'error', message: error.message });
+  } finally {
+    connection.release();
   }
 };
 
