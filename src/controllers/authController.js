@@ -66,14 +66,11 @@ export const requestRegistrationOtp = async (req, res) => {
       }
     });
 
-    // Dispatch OTP via Email Notification module
+    // Dispatch OTP via Email Notification module asynchronously (non-blocking)
     if (email) {
-      try {
-        const sent = await sendOtpEmail(email, otp, full_name);
-        console.log(`📧 [Auth] OTP email dispatch to ${email} status: ${sent}`);
-      } catch (err) {
-        console.error('❌ [Auth] Email OTP dispatch error:', err.message);
-      }
+      sendOtpEmail(email, otp, full_name)
+        .then(sent => console.log(`📧 [Auth] OTP email dispatch to ${email} status: ${sent}`))
+        .catch(err => console.error('❌ [Auth] Email OTP dispatch error:', err.message));
     }
 
     return res.status(200).json({
@@ -477,13 +474,10 @@ export const requestForgotPasswordOtp = async (req, res) => {
       userName: user.full_name
     });
 
-    // Send OTP via Nodemailer Email helper
-    try {
-      const sent = await sendPasswordResetOtpEmail(user.email, otp, user.full_name);
-      console.log(`📧 [Auth] Password reset OTP dispatch to ${user.email} status: ${sent}`);
-    } catch (err) {
-      console.error('❌ [Auth] Password reset OTP email dispatch error:', err.message);
-    }
+    // Send OTP via Nodemailer Email helper asynchronously (non-blocking)
+    sendPasswordResetOtpEmail(user.email, otp, user.full_name)
+      .then(sent => console.log(`📧 [Auth] Password reset OTP dispatch to ${user.email} status: ${sent}`))
+      .catch(err => console.error('❌ [Auth] Password reset OTP email dispatch error:', err.message));
 
     return res.status(200).json({
       status: 'success',

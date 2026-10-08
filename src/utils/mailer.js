@@ -12,7 +12,10 @@ const getTransporter = () => {
   if (host.includes('gmail.com') || user.includes('gmail.com')) {
     return nodemailer.createTransport({
       service: 'gmail',
-      auth: user && pass ? { user, pass } : undefined
+      auth: user && pass ? { user, pass } : undefined,
+      connectionTimeout: 5000,
+      socketTimeout: 5000,
+      greetingTimeout: 5000
     });
   }
 
@@ -24,12 +27,15 @@ const getTransporter = () => {
     auth: user && pass ? { user, pass } : undefined,
     tls: {
       rejectUnauthorized: false
-    }
+    },
+    connectionTimeout: 5000,
+    socketTimeout: 5000,
+    greetingTimeout: 5000
   });
 };
 
 /**
- * Core sendEmail helper with non-blocking error catching
+ * Core sendEmail helper with non-blocking error catching and strict timeouts
  */
 export const sendEmail = async ({ to, subject, html, text }) => {
   if (!to) {
@@ -65,7 +71,9 @@ export const sendEmail = async ({ to, subject, html, text }) => {
 
   try {
     const transporter = getTransporter();
-    const info = await transporter.sendMail({
+    
+    // Wrap email dispatch in a 6-second timeout race guard
+    const emailPromise = transporter.sendMail({
       from,
       to,
       subject,
@@ -73,10 +81,15 @@ export const sendEmail = async ({ to, subject, html, text }) => {
       html
     });
 
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('SMTP Connection Timeout (6s)')), 6000)
+    );
+
+    const info = await Promise.race([emailPromise, timeoutPromise]);
     console.log(`📧 [Mailer] Email successfully sent to ${to} | MessageID: ${info.messageId}`);
     return true;
   } catch (error) {
-    console.error(`❌ [Mailer Error] Failed to send email to ${to}:`, error.message, error.stack);
+    console.error(`❌ [Mailer Error] Failed to send email to ${to}:`, error.message);
     return false; // Return false but do not throw to prevent blocking calling endpoints
   }
 };
