@@ -12,6 +12,8 @@ import {
 } from '../controllers/authController.js';
 import { authenticateToken } from '../middlewares/authMiddleware.js';
 import nodemailer from 'nodemailer';
+import dns from 'dns';
+dns.setDefaultResultOrder('ipv4first');
 
 const router = express.Router();
 

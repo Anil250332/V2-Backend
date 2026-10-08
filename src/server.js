@@ -1,3 +1,8 @@
+// CRITICAL: Force IPv4 DNS resolution BEFORE any other imports
+// Render free tier does not support IPv6 outbound - Gmail SMTP fails with ENETUNREACH on IPv6
+import dns from 'dns';
+dns.setDefaultResultOrder('ipv4first');
+
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
