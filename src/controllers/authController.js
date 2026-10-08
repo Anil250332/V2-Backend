@@ -68,7 +68,12 @@ export const requestRegistrationOtp = async (req, res) => {
 
     // Dispatch OTP via Email Notification module
     if (email) {
-      sendOtpEmail(email, otp, full_name).catch(err => console.error('Email OTP dispatch error:', err.message));
+      try {
+        const sent = await sendOtpEmail(email, otp, full_name);
+        console.log(`📧 [Auth] OTP email dispatch to ${email} status: ${sent}`);
+      } catch (err) {
+        console.error('❌ [Auth] Email OTP dispatch error:', err.message);
+      }
     }
 
     return res.status(200).json({
@@ -473,9 +478,12 @@ export const requestForgotPasswordOtp = async (req, res) => {
     });
 
     // Send OTP via Nodemailer Email helper
-    sendPasswordResetOtpEmail(user.email, otp, user.full_name).catch(err =>
-      console.error('Password reset OTP email dispatch error:', err.message)
-    );
+    try {
+      const sent = await sendPasswordResetOtpEmail(user.email, otp, user.full_name);
+      console.log(`📧 [Auth] Password reset OTP dispatch to ${user.email} status: ${sent}`);
+    } catch (err) {
+      console.error('❌ [Auth] Password reset OTP email dispatch error:', err.message);
+    }
 
     return res.status(200).json({
       status: 'success',
