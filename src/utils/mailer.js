@@ -5,15 +5,22 @@ import pool from '../config/db.js';
  * Lazy creation of Nodemailer Transporter
  */
 const getTransporter = () => {
-  const host = process.env.SMTP_HOST || 'smtp.gmail.com';
-  const port = parseInt(process.env.SMTP_PORT || '587', 10);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
+  const host = (process.env.SMTP_HOST || 'smtp.gmail.com').trim();
+  const user = (process.env.SMTP_USER || '').trim();
+  const pass = (process.env.SMTP_PASS || '').trim();
 
+  if (host.includes('gmail.com') || user.includes('gmail.com')) {
+    return nodemailer.createTransport({
+      service: 'gmail',
+      auth: user && pass ? { user, pass } : undefined
+    });
+  }
+
+  const port = parseInt((process.env.SMTP_PORT || '587').trim(), 10);
   return nodemailer.createTransport({
     host,
     port,
-    secure: port === 465, // true for 465, false for other ports
+    secure: port === 465,
     auth: user && pass ? { user, pass } : undefined,
     tls: {
       rejectUnauthorized: false
@@ -30,10 +37,21 @@ export const sendEmail = async ({ to, subject, html, text }) => {
     return false;
   }
 
-  const from = process.env.EMAIL_FROM || '"V2Online MP Portal" <no-reply@v2onlineportal.com>';
+  const user = (process.env.SMTP_USER || '').trim();
+  const pass = (process.env.SMTP_PASS || '').trim();
+
+  // For Gmail, From header MUST match the authenticated Gmail account user to avoid Gmail 550/554 SendAsDenied rejection
+  const isGmail = (process.env.SMTP_HOST || '').includes('gmail.com') || user.includes('gmail.com');
+  const defaultFrom = user ? `"V2Online MP Portal" <${user}>` : '"V2Online MP Portal" <no-reply@v2onlineportal.com>';
+  
+  const from = (isGmail && user) 
+    ? `"V2Online MP Portal" <${user}>`
+    : ((process.env.EMAIL_FROM && !process.env.EMAIL_FROM.includes('no-reply@v2onlineportal.com')) 
+        ? process.env.EMAIL_FROM 
+        : defaultFrom);
 
   // Check if SMTP credentials are configured
-  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+  if (!user || !pass) {
     console.log(`\n================ EMAIL NOTIFICATION (DEV SIMULATION) ================`);
     console.log(`To: ${to}`);
     console.log(`From: ${from}`);
@@ -58,13 +76,13 @@ export const sendEmail = async ({ to, subject, html, text }) => {
     console.log(`📧 [Mailer] Email successfully sent to ${to} | MessageID: ${info.messageId}`);
     return true;
   } catch (error) {
-    console.error(`❌ [Mailer Error] Failed to send email to ${to}:`, error.message);
+    console.error(`❌ [Mailer Error] Failed to send email to ${to}:`, error.message, error.stack);
     return false; // Return false but do not throw to prevent blocking calling endpoints
   }
 };
 
 /**
- * Base HTML Template wrapper for consistent styling
+ * Base HTML Template wrapper for consistent modern styling
  */
 const wrapTemplate = (title, contentHtml) => `
 <!DOCTYPE html>
@@ -74,40 +92,173 @@ const wrapTemplate = (title, contentHtml) => `
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${title}</title>
   <style>
-    body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #f4f7fb; margin: 0; padding: 20px; color: #1e293b; }
-    .container { max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
-    .header { background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%); padding: 24px; text-align: center; color: #ffffff; }
-    .header h1 { margin: 0; font-size: 22px; font-weight: 800; letter-spacing: 0.5px; }
-    .header p { margin: 4px 0 0 0; font-size: 12px; color: #93c5fd; text-transform: uppercase; letter-spacing: 1px; font-weight: 600; }
-    .body { padding: 30px 24px; }
-    .badge { display: inline-block; padding: 4px 12px; border-radius: 9999px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
-    .badge-primary { background: #dbeafe; color: #1e40af; }
-    .badge-success { background: #dcfce7; color: #166534; }
-    .badge-warning { background: #fef3c7; color: #92400e; }
-    .badge-danger { background: #fee2e2; color: #991b1b; }
-    .box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px; margin: 16px 0; }
-    .otp-code { font-size: 32px; font-weight: 900; letter-spacing: 6px; color: #1d4ed8; text-align: center; margin: 12px 0; background: #eff6ff; padding: 12px; border-radius: 8px; border: 1px dashed #60a5fa; }
-    .table-info { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px; }
-    .table-info td { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; }
+    body {
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+      background-color: #0f172a;
+      margin: 0;
+      padding: 30px 12px;
+      color: #334155;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrapper {
+      max-width: 600px;
+      margin: 0 auto;
+    }
+    .top-bar {
+      height: 6px;
+      background: linear-gradient(90deg, #3b82f6 0%, #6366f1 50%, #10b981 100%);
+      border-radius: 16px 16px 0 0;
+    }
+    .container {
+      background: #ffffff;
+      border-radius: 0 0 18px 18px;
+      overflow: hidden;
+      border: 1px solid #e2e8f0;
+      box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.3);
+    }
+    .header {
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      padding: 28px 24px;
+      text-align: center;
+    }
+    .brand-box {
+      display: inline-block;
+      background: rgba(255, 255, 255, 0.08);
+      padding: 8px 18px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      margin-bottom: 6px;
+    }
+    .logo-v2 {
+      font-size: 20px;
+      font-weight: 900;
+      color: #38bdf8;
+      letter-spacing: -0.5px;
+    }
+    .logo-online {
+      font-size: 18px;
+      font-weight: 800;
+      color: #f59e0b;
+      letter-spacing: 1px;
+    }
+    .header p {
+      margin: 6px 0 0 0;
+      font-size: 11px;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      font-weight: 700;
+    }
+    .body {
+      padding: 32px 28px;
+      background: #ffffff;
+    }
+    .badge {
+      display: inline-block;
+      padding: 5px 14px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .badge-primary { background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; }
+    .badge-success { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+    .badge-warning { background: #fffbebf8; color: #b45309; border: 1px solid #fef08a; }
+    .badge-danger { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+    
+    .box {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-left: 4px solid #3b82f6;
+      border-radius: 12px;
+      padding: 16px 20px;
+      margin: 20px 0;
+    }
+    .box-warning {
+      background: #fffbebf8;
+      border: 1px solid #fde68a;
+      border-left: 4px solid #f59e0b;
+    }
+    .box-success {
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      border-left: 4px solid #10b981;
+    }
+
+    .otp-card {
+      background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+      border: 2px dashed #3b82f6;
+      border-radius: 16px;
+      padding: 24px;
+      text-align: center;
+      margin: 24px 0;
+    }
+    .otp-code {
+      font-size: 38px;
+      font-weight: 900;
+      letter-spacing: 10px;
+      color: #1d4ed8;
+      font-family: 'Courier New', Courier, monospace;
+      margin: 8px 0;
+    }
+    .table-info {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      margin: 20px 0;
+      font-size: 13px;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .table-info tr:nth-child(even) { background-color: #f8fafc; }
+    .table-info tr:nth-child(odd) { background-color: #ffffff; }
+    .table-info td {
+      padding: 12px 16px;
+      border-bottom: 1px solid #f1f5f9;
+    }
     .table-info tr:last-child td { border-bottom: none; }
-    .table-info td.label { font-weight: 600; color: #64748b; width: 40%; }
-    .table-info td.value { font-weight: 700; color: #0f172a; text-align: right; }
-    .footer { background: #f8fafc; border-top: 1px solid #e2e8f0; padding: 16px; text-align: center; font-size: 11px; color: #64748b; }
-    .footer a { color: #2563eb; text-decoration: none; }
+    .table-info td.label {
+      font-weight: 600;
+      color: #64748b;
+      width: 42%;
+    }
+    .table-info td.value {
+      font-weight: 700;
+      color: #0f172a;
+      text-align: right;
+    }
+    .footer {
+      background: #0f172a;
+      padding: 24px;
+      text-align: center;
+      font-size: 11px;
+      color: #94a3b8;
+    }
+    .footer p { margin: 4px 0; }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="header">
-      <h1>V2ONLINE PORTAL</h1>
-      <p>Citizen Services & MP Online Management System</p>
-    </div>
-    <div class="body">
-      ${contentHtml}
-    </div>
-    <div class="footer">
-      <p>© 2026 V2Online Citizen Portal. All rights reserved.</p>
-      <p>This is an automated operational notification. Please do not reply directly to this email.</p>
+  <div class="wrapper">
+    <div class="top-bar"></div>
+    <div class="container">
+      <div class="header">
+        <div class="brand-box">
+          <span class="logo-v2">V2</span>
+          <span class="logo-online">ONLINE</span>
+        </div>
+        <p>Citizen Services & MP Online Portal</p>
+      </div>
+      <div class="body">
+        ${contentHtml}
+      </div>
+      <div class="footer">
+        <p>© 2026 V2Online Citizen Services Portal. All rights reserved.</p>
+        <p style="color:#64748b; font-size:10px; margin-top:6px;">
+          This is an automated operational notification. Please do not reply directly to this email.
+        </p>
+      </div>
     </div>
   </div>
 </body>
@@ -158,26 +309,34 @@ export const getAdminAndManagerEmails = async () => {
  */
 export const sendOtpEmail = async (toEmail, otp, userName = 'User') => {
   if (!toEmail) return;
-  const subject = `[V2Online] ${otp} is your Registration Verification OTP`;
+  const subject = `🔐 [V2Online] ${otp} is your Registration Verification OTP`;
   const html = wrapTemplate(
     'Registration Verification OTP',
     `
-      <h2 style="margin-top:0; color:#0f172a; font-size:18px;">Hello ${userName},</h2>
-      <p style="font-size:14px; color:#334155; line-height:1.5;">
-        Thank you for initiating registration on <strong>V2Online Services Portal</strong>.
-        Please use the 6-digit verification code below to complete your setup:
+      <div style="text-align:right;"><span class="badge badge-primary">Verification</span></div>
+      <h2 style="margin-top:0; color:#0f172a; font-size:20px; font-weight:800;">Hello ${userName}, 👋</h2>
+      <p style="font-size:14px; color:#475569; line-height:1.6;">
+        Welcome to <strong>V2Online Services Portal</strong>! Please use the 6-digit verification code below to complete your registration:
       </p>
       
-      <div class="otp-code">${otp}</div>
+      <div class="otp-card">
+        <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:#3b82f6; letter-spacing:1px; margin-bottom:4px;">
+          Your Security Code
+        </div>
+        <div class="otp-code">${otp}</div>
+        <div style="font-size:11px; color:#64748b; margin-top:4px;">
+          Valid for <strong>5 Minutes</strong>
+        </div>
+      </div>
 
-      <div class="box">
-        <p style="margin:0; font-size:12px; color:#64748b;">
-          <strong>⏱️ Expiry Warning:</strong> This OTP is valid for <strong>5 minutes</strong>. If expired, click 'Resend OTP' on the portal to get a fresh code.
+      <div class="box box-warning">
+        <p style="margin:0; font-size:12px; color:#92400e; line-height:1.5;">
+          <strong>⏱️ Expiry Notice:</strong> This OTP will expire in <strong>5 minutes</strong>. If it expires, you can click 'Resend Email OTP' on the portal.
         </p>
       </div>
 
-      <p style="font-size:12px; color:#94a3b8; margin-top:20px;">
-        If you did not request this OTP, please ignore this message.
+      <p style="font-size:12px; color:#94a3b8; margin-top:24px;">
+        If you did not initiate this registration request, please ignore this email safely.
       </p>
     `
   );
@@ -194,22 +353,31 @@ export const sendPasswordResetOtpEmail = async (toEmail, otp, userName = 'User')
   const html = wrapTemplate(
     'Password Reset OTP Verification',
     `
-      <h2 style="margin-top:0; color:#0f172a; font-size:18px;">Hello ${userName},</h2>
-      <p style="font-size:14px; color:#334155; line-height:1.5;">
+      <div style="text-align:right;"><span class="badge badge-warning">Security Verification</span></div>
+      <h2 style="margin-top:0; color:#0f172a; font-size:20px; font-weight:800;">Hello ${userName}, 👋</h2>
+      <p style="font-size:14px; color:#475569; line-height:1.6;">
         We received a request to reset the password for your <strong>V2Online Portal</strong> account.
-        Please use the 6-digit verification code below to proceed:
+        Use the 6-digit code below to set a new password:
       </p>
       
-      <div class="otp-code">${otp}</div>
+      <div class="otp-card">
+        <div style="font-size:11px; font-weight:700; text-transform:uppercase; color:#2563eb; letter-spacing:1px; margin-bottom:4px;">
+          Password Reset Code
+        </div>
+        <div class="otp-code">${otp}</div>
+        <div style="font-size:11px; color:#64748b; margin-top:4px;">
+          Valid for <strong>15 Minutes</strong>
+        </div>
+      </div>
 
-      <div class="box" style="background:#eff6ff; border-color:#bfdbfe;">
-        <p style="margin:0; font-size:12px; color:#1e40af;">
-          <strong>⏱️ Expiry Warning:</strong> This password reset code is valid for <strong>15 minutes</strong>. If expired, click 'Resend OTP' on the portal.
+      <div class="box box-warning">
+        <p style="margin:0; font-size:12px; color:#92400e; line-height:1.5;">
+          <strong>⏱️ Security Warning:</strong> This password reset code is valid for <strong>15 minutes</strong>. Do not share this OTP with anyone.
         </p>
       </div>
 
-      <p style="font-size:12px; color:#94a3b8; margin-top:20px;">
-        If you did not request a password reset, please ignore this email or contact support if you suspect unauthorized access.
+      <p style="font-size:12px; color:#94a3b8; margin-top:24px;">
+        If you did not request a password reset, please ignore this message or contact portal administration immediately.
       </p>
     `
   );
@@ -223,15 +391,15 @@ export const sendPasswordResetOtpEmail = async (toEmail, otp, userName = 'User')
 export const sendAdminRegistrationAlert = async ({ name, mobile, email, role, shopName }) => {
   const adminEmails = await getAdminEmails();
   const roleLabel = role === 'agent' ? 'MP Online Agent (Shop)' : 'Operator (Officer)';
-  const subject = `[Admin Alert] New ${roleLabel} Registration Pending Approval: ${name}`;
+  const subject = `🔔 [Admin Alert] New ${roleLabel} Registration Pending: ${name}`;
 
   const html = wrapTemplate(
     'New User Registration Alert',
     `
-      <div style="text-align:right;"><span class="badge badge-warning">Pending Approval</span></div>
-      <h2 style="margin-top:0; color:#0f172a; font-size:18px;">New Account Registration Request</h2>
-      <p style="font-size:14px; color:#334155;">
-        A new partner has registered on the platform and requires verification.
+      <div style="text-align:right;"><span class="badge badge-warning">Pending Review</span></div>
+      <h2 style="margin-top:0; color:#0f172a; font-size:20px; font-weight:800;">New Registration Request</h2>
+      <p style="font-size:14px; color:#475569; line-height:1.6;">
+        A new partner has registered on <strong>V2Online Portal</strong> and requires administrative verification.
       </p>
 
       <table class="table-info">
@@ -242,9 +410,11 @@ export const sendAdminRegistrationAlert = async ({ name, mobile, email, role, sh
         <tr><td class="label">Shop / Office</td><td class="value">${shopName || 'N/A'}</td></tr>
       </table>
 
-      <p style="font-size:13px; color:#475569;">
-        Please log into the <strong>Admin Dashboard -> Approvals</strong> section to review and approve/reject this account.
-      </p>
+      <div class="box box-warning">
+        <p style="margin:0; font-size:12px; color:#92400e; line-height:1.5;">
+          <strong>⚡ Action Required:</strong> Please log into <strong>Admin Dashboard -> Approvals</strong> to verify documents and approve/reject this account.
+        </p>
+      </div>
     `
   );
 
@@ -266,27 +436,29 @@ export const sendUserApprovalEmail = async ({ toEmail, name, role, status }) => 
     `
       <div style="text-align:right;">
         <span class="badge ${isApproved ? 'badge-success' : 'badge-danger'}">
-          ${isApproved ? 'Approved' : 'Rejected'}
+          ${isApproved ? 'APPROVED' : 'REJECTED'}
         </span>
       </div>
-      <h2 style="margin-top:0; color:#0f172a; font-size:18px;">Hello ${name},</h2>
+      <h2 style="margin-top:0; color:#0f172a; font-size:20px; font-weight:800;">Hello ${name}, 👋</h2>
       ${
         isApproved ? `
-          <p style="font-size:14px; color:#334155; line-height:1.5;">
-            Great news! Your account request as <strong>${role.toUpperCase()}</strong> has been <strong>APPROVED</strong> by the administration.
+          <p style="font-size:14px; color:#475569; line-height:1.6;">
+            Great news! Your registration request as <strong>${role.toUpperCase()}</strong> has been <strong>APPROVED</strong> by the portal administration.
           </p>
-          <div class="box" style="background:#f0fdf4; border-color:#bbf7d0;">
-            <p style="margin:0; font-size:13px; color:#166534; font-weight:600;">
-              ✅ You can now log into your dashboard using your mobile number and password.
+          <div class="box box-success">
+            <p style="margin:0; font-size:13px; color:#166534; font-weight:700;">
+              ✅ Account Activated! You can now log into your dashboard using your registered mobile number and password.
             </p>
           </div>
         ` : `
-          <p style="font-size:14px; color:#334155; line-height:1.5;">
-            We regret to inform you that your registration request as <strong>${role.toUpperCase()}</strong> has been <strong>REJECTED</strong> or set to inactive by the administration.
+          <p style="font-size:14px; color:#475569; line-height:1.6;">
+            We regret to inform you that your registration request as <strong>${role.toUpperCase()}</strong> has been <strong>REJECTED</strong> or set to inactive by administration.
           </p>
-          <p style="font-size:13px; color:#64748b;">
-            Please contact support if you believe this was an error.
-          </p>
+          <div class="box" style="border-left-color:#ef4444; background:#fef2f2;">
+            <p style="margin:0; font-size:12px; color:#991b1b;">
+              Please contact portal support if you believe this decision was made in error.
+            </p>
+          </div>
         `
       }
     `
@@ -304,8 +476,9 @@ export const sendUserCreatedEmail = async ({ toEmail, name, role, mobile, tempPa
   const html = wrapTemplate(
     'Welcome to V2Online Portal',
     `
-      <h2 style="margin-top:0; color:#0f172a; font-size:18px;">Hello ${name},</h2>
-      <p style="font-size:14px; color:#334155; line-height:1.5;">
+      <div style="text-align:right;"><span class="badge badge-success">Account Created</span></div>
+      <h2 style="margin-top:0; color:#0f172a; font-size:20px; font-weight:800;">Hello ${name}, 👋</h2>
+      <p style="font-size:14px; color:#475569; line-height:1.6;">
         An account has been created for you on <strong>V2Online Portal</strong> by your ${createdByRole || 'Admin'}.
       </p>
 
@@ -316,8 +489,8 @@ export const sendUserCreatedEmail = async ({ toEmail, name, role, mobile, tempPa
       </table>
 
       <div class="box">
-        <p style="margin:0; font-size:12px; color:#475569;">
-          🔒 Please login to the portal and update your password immediately after first sign in.
+        <p style="margin:0; font-size:12px; color:#334155;">
+          🔒 <strong>Security Advice:</strong> Please log into the portal and update your password immediately after first sign in.
         </p>
       </div>
     `
@@ -337,9 +510,9 @@ export const sendDistributorUserAddedAlertToAdmin = async ({ distributorName, ne
     'Distributor Added User',
     `
       <div style="text-align:right;"><span class="badge badge-primary">Distributor Action</span></div>
-      <h2 style="margin-top:0; color:#0f172a; font-size:18px;">New Account Added by Distributor</h2>
-      <p style="font-size:14px; color:#334155;">
-        Distributor <strong>${distributorName}</strong> has created a new account on the portal.
+      <h2 style="margin-top:0; color:#0f172a; font-size:20px; font-weight:800;">New Account Added by Distributor</h2>
+      <p style="font-size:14px; color:#475569;">
+        Distributor <strong>${distributorName}</strong> has created a new partner account on the portal.
       </p>
 
       <table class="table-info">
@@ -364,9 +537,9 @@ export const sendTaskAssignmentEmail = async ({ toEmail, operatorName, applicati
     'New Task Assigned',
     `
       <div style="text-align:right;"><span class="badge badge-warning">Action Required</span></div>
-      <h2 style="margin-top:0; color:#0f172a; font-size:18px;">Hello ${operatorName},</h2>
-      <p style="font-size:14px; color:#334155;">
-        A new service application matching your assigned area/service has been submitted and assigned to you.
+      <h2 style="margin-top:0; color:#0f172a; font-size:20px; font-weight:800;">Hello ${operatorName}, 👋</h2>
+      <p style="font-size:14px; color:#475569; line-height:1.6;">
+        A new service application matching your assigned area/service has been submitted and assigned to you for processing:
       </p>
 
       <table class="table-info">
@@ -375,9 +548,11 @@ export const sendTaskAssignmentEmail = async ({ toEmail, operatorName, applicati
         <tr><td class="label">Submitted By (Shop)</td><td class="value">${shopName}</td></tr>
       </table>
 
-      <p style="font-size:13px; color:#475569;">
-        Please log into your <strong>Operator Dashboard -> My Tasks</strong> to process this request.
-      </p>
+      <div class="box">
+        <p style="margin:0; font-size:12px; color:#334155;">
+          ⚡ Please log into your <strong>Operator Dashboard -> My Tasks</strong> to process this request.
+        </p>
+      </div>
     `
   );
 
@@ -399,11 +574,11 @@ export const sendTaskCompletedEmail = async ({ toEmail, shopOwnerName, applicati
     `
       <div style="text-align:right;">
         <span class="badge ${isCompleted ? 'badge-success' : 'badge-danger'}">
-          ${isCompleted ? 'Completed' : 'Rejected'}
+          ${isCompleted ? 'COMPLETED' : 'REJECTED'}
         </span>
       </div>
-      <h2 style="margin-top:0; color:#0f172a; font-size:18px;">Hello ${shopOwnerName || 'Partner'},</h2>
-      <p style="font-size:14px; color:#334155;">
+      <h2 style="margin-top:0; color:#0f172a; font-size:20px; font-weight:800;">Hello ${shopOwnerName || 'Partner'}, 👋</h2>
+      <p style="font-size:14px; color:#475569; line-height:1.6;">
         Your service application <strong>#${applicationNo}</strong> for <strong>${serviceName}</strong> has been processed by the assigned operator.
       </p>
 
@@ -413,9 +588,11 @@ export const sendTaskCompletedEmail = async ({ toEmail, shopOwnerName, applicati
         <tr><td class="label">Final Status</td><td class="value">${status.toUpperCase()}</td></tr>
       </table>
 
-      <p style="font-size:13px; color:#475569;">
-        Log in to your <strong>Shop Dashboard -> Applications</strong> to download documents or view full notes.
-      </p>
+      <div class="box ${isCompleted ? 'box-success' : ''}">
+        <p style="margin:0; font-size:12px; color:${isCompleted ? '#166534' : '#991b1b'};">
+          Log into your <strong>Shop Dashboard -> Applications</strong> to download output documents or view remarks.
+        </p>
+      </div>
     `
   );
 
@@ -432,16 +609,16 @@ export const sendWalletDebitEmail = async ({ toEmail, shopName, applicationNo, s
     'Wallet Debit Confirmation',
     `
       <div style="text-align:right;"><span class="badge badge-primary">Debit Txn</span></div>
-      <h2 style="margin-top:0; color:#0f172a; font-size:18px;">Wallet Amount Deducted</h2>
-      <p style="font-size:14px; color:#334155;">
+      <h2 style="margin-top:0; color:#0f172a; font-size:20px; font-weight:800;">Wallet Amount Deducted</h2>
+      <p style="font-size:14px; color:#475569; line-height:1.6;">
         An amount of <strong>₹${parseFloat(amountDeducted).toFixed(2)}</strong> has been deducted from your wallet for service application submission.
       </p>
 
       <table class="table-info">
         <tr><td class="label">Application No</td><td class="value">#${applicationNo}</td></tr>
         <tr><td class="label">Service Name</td><td class="value">${serviceName}</td></tr>
-        <tr><td class="label">Deducted Amount</td><td class="value" style="color:#dc2626;">- ₹${parseFloat(amountDeducted).toFixed(2)}</td></tr>
-        <tr><td class="label">Remaining Balance</td><td class="value" style="color:#2563eb;">₹${parseFloat(remainingBalance).toFixed(2)}</td></tr>
+        <tr><td class="label">Deducted Amount</td><td class="value" style="color:#dc2626; font-size:15px;">- ₹${parseFloat(amountDeducted).toFixed(2)}</td></tr>
+        <tr><td class="label">Remaining Balance</td><td class="value" style="color:#2563eb; font-size:15px;">₹${parseFloat(remainingBalance).toFixed(2)}</td></tr>
       </table>
     `
   );
@@ -459,15 +636,15 @@ export const sendWalletCreditEmail = async ({ toEmail, shopName, amount, newBala
     'Wallet Credit Successful',
     `
       <div style="text-align:right;"><span class="badge badge-success">Credit Txn</span></div>
-      <h2 style="margin-top:0; color:#0f172a; font-size:18px;">Wallet Recharge Confirmed</h2>
-      <p style="font-size:14px; color:#334155;">
-        Your wallet has been credited with <strong>₹${parseFloat(amount).toFixed(2)}</strong>.
+      <h2 style="margin-top:0; color:#0f172a; font-size:20px; font-weight:800;">Wallet Recharge Confirmed 🎉</h2>
+      <p style="font-size:14px; color:#475569; line-height:1.6;">
+        Great news! Your wallet has been successfully credited with <strong>₹${parseFloat(amount).toFixed(2)}</strong>.
       </p>
 
       <table class="table-info">
         ${txnId ? `<tr><td class="label">Transaction Reference</td><td class="value">${txnId}</td></tr>` : ''}
-        <tr><td class="label">Credited Amount</td><td class="value" style="color:#16a34a;">+ ₹${parseFloat(amount).toFixed(2)}</td></tr>
-        <tr><td class="label">Updated Balance</td><td class="value" style="color:#2563eb;">₹${parseFloat(newBalance).toFixed(2)}</td></tr>
+        <tr><td class="label">Credited Amount</td><td class="value" style="color:#16a34a; font-size:15px;">+ ₹${parseFloat(amount).toFixed(2)}</td></tr>
+        <tr><td class="label">Updated Balance</td><td class="value" style="color:#2563eb; font-size:15px;">₹${parseFloat(newBalance).toFixed(2)}</td></tr>
       </table>
     `
   );
@@ -486,9 +663,9 @@ export const sendWithdrawalRequestAlertToAdmin = async ({ operatorName, amount, 
     'Withdrawal Request Alert',
     `
       <div style="text-align:right;"><span class="badge badge-warning">Pending Review</span></div>
-      <h2 style="margin-top:0; color:#0f172a; font-size:18px;">New Operator Withdrawal Request</h2>
-      <p style="font-size:14px; color:#334155;">
-        Operator <strong>${operatorName}</strong> has submitted a request to withdraw funds.
+      <h2 style="margin-top:0; color:#0f172a; font-size:20px; font-weight:800;">New Withdrawal Request</h2>
+      <p style="font-size:14px; color:#475569;">
+        Operator <strong>${operatorName}</strong> has submitted a request to withdraw earned commission funds.
       </p>
 
       <table class="table-info">
@@ -518,12 +695,12 @@ export const sendWithdrawalStatusEmail = async ({ toEmail, operatorName, amount,
     `
       <div style="text-align:right;">
         <span class="badge ${isApproved ? 'badge-success' : 'badge-danger'}">
-          ${isApproved ? 'Approved' : 'Rejected'}
+          ${isApproved ? 'APPROVED' : 'REJECTED'}
         </span>
       </div>
-      <h2 style="margin-top:0; color:#0f172a; font-size:18px;">Hello ${operatorName},</h2>
-      <p style="font-size:14px; color:#334155;">
-        Your withdrawal request of <strong>₹${parseFloat(amount).toFixed(2)}</strong> has been <strong>${status.toUpperCase()}</strong>.
+      <h2 style="margin-top:0; color:#0f172a; font-size:20px; font-weight:800;">Hello ${operatorName}, 👋</h2>
+      <p style="font-size:14px; color:#475569; line-height:1.6;">
+        Your withdrawal request of <strong>₹${parseFloat(amount).toFixed(2)}</strong> has been <strong>${status.toUpperCase()}</strong> by Administration.
       </p>
 
       ${note ? `<div class="box"><p style="margin:0; font-size:12px; color:#475569;"><strong>Admin Note:</strong> ${note}</p></div>` : ''}
@@ -544,9 +721,9 @@ export const sendRateRequestAlertToAdmin = async ({ operatorName, serviceName, r
     'Service Price Request Alert',
     `
       <div style="text-align:right;"><span class="badge badge-warning">Price Review</span></div>
-      <h2 style="margin-top:0; color:#0f172a; font-size:18px;">Operator Custom Rate Request</h2>
-      <p style="font-size:14px; color:#334155;">
-        Operator <strong>${operatorName}</strong> requested a custom rate for <strong>${serviceName}</strong>.
+      <h2 style="margin-top:0; color:#0f172a; font-size:20px; font-weight:800;">Operator Custom Rate Request</h2>
+      <p style="font-size:14px; color:#475569;">
+        Operator <strong>${operatorName}</strong> requested a custom rate modification for <strong>${serviceName}</strong>.
       </p>
 
       <table class="table-info">
@@ -576,17 +753,17 @@ export const sendRateReviewDecisionEmail = async ({ toEmail, operatorName, servi
     `
       <div style="text-align:right;">
         <span class="badge ${isApproved ? 'badge-success' : 'badge-danger'}">
-          ${isApproved ? 'Approved' : 'Rejected'}
+          ${isApproved ? 'APPROVED' : 'REJECTED'}
         </span>
       </div>
-      <h2 style="margin-top:0; color:#0f172a; font-size:18px;">Hello ${operatorName},</h2>
-      <p style="font-size:14px; color:#334155;">
+      <h2 style="margin-top:0; color:#0f172a; font-size:20px; font-weight:800;">Hello ${operatorName}, 👋</h2>
+      <p style="font-size:14px; color:#475569; line-height:1.6;">
         Your custom rate request for service <strong>${serviceName}</strong> has been <strong>${status.toUpperCase()}</strong>.
       </p>
 
       ${isApproved ? `
         <table class="table-info">
-          <tr><td class="label">Final Approved Rate</td><td class="value" style="color:#16a34a;">₹${parseFloat(approvedRate).toFixed(2)}</td></tr>
+          <tr><td class="label">Final Approved Rate</td><td class="value" style="color:#16a34a; font-size:15px;">₹${parseFloat(approvedRate).toFixed(2)}</td></tr>
         </table>
       ` : ''}
     `
@@ -606,8 +783,8 @@ export const sendComplaintTicketAlertToAdminsAndManagers = async ({ ticketId, sh
     'New Support Ticket Alert',
     `
       <div style="text-align:right;"><span class="badge badge-danger">Support Ticket</span></div>
-      <h2 style="margin-top:0; color:#0f172a; font-size:18px;">New Complaint Registered</h2>
-      <p style="font-size:14px; color:#334155;">
+      <h2 style="margin-top:0; color:#0f172a; font-size:20px; font-weight:800;">New Complaint Registered</h2>
+      <p style="font-size:14px; color:#475569;">
         A new complaint ticket <strong>#${ticketId}</strong> has been submitted by <strong>${shopName || 'Shop Partner'}</strong>.
       </p>
 
@@ -632,15 +809,15 @@ export const sendComplaintResolvedEmail = async ({ toEmail, shopName, ticketId, 
   const html = wrapTemplate(
     'Ticket Resolution Update',
     `
-      <div style="text-align:right;"><span class="badge badge-success">Resolved</span></div>
-      <h2 style="margin-top:0; color:#0f172a; font-size:18px;">Hello ${shopName || 'Partner'},</h2>
-      <p style="font-size:14px; color:#334155;">
+      <div style="text-align:right;"><span class="badge badge-success">RESOLVED</span></div>
+      <h2 style="margin-top:0; color:#0f172a; font-size:20px; font-weight:800;">Hello ${shopName || 'Partner'}, 👋</h2>
+      <p style="font-size:14px; color:#475569; line-height:1.6;">
         Your support complaint ticket <strong>#${ticketId}</strong> has been resolved by our support team.
       </p>
 
       ${resolutionNote ? `
-        <div class="box">
-          <p style="margin:0; font-size:13px; color:#334155;"><strong>Resolution Remarks:</strong> ${resolutionNote}</p>
+        <div class="box box-success">
+          <p style="margin:0; font-size:13px; color:#166534;"><strong>Resolution Remarks:</strong> ${resolutionNote}</p>
         </div>
       ` : ''}
     `
@@ -659,20 +836,22 @@ export const sendTaskVerifiedEmail = async ({ toEmail, shopOwnerName, applicatio
     'Application Approved & Verified',
     `
       <div style="text-align:right;"><span class="badge badge-success">Approved</span></div>
-      <h2 style="margin-top:0; color:#0f172a; font-size:18px;">Hello ${shopOwnerName || 'Partner'},</h2>
-      <p style="font-size:14px; color:#334155;">
+      <h2 style="margin-top:0; color:#0f172a; font-size:20px; font-weight:800;">Hello ${shopOwnerName || 'Partner'}, 👋</h2>
+      <p style="font-size:14px; color:#475569; line-height:1.6;">
         Great news! Your service application <strong>#${applicationNo}</strong> for <strong>${serviceName}</strong> has been <strong>APPROVED & VERIFIED</strong> by Administration.
       </p>
 
       <table class="table-info">
         <tr><td class="label">Application No</td><td class="value">#${applicationNo}</td></tr>
         <tr><td class="label">Service Name</td><td class="value">${serviceName}</td></tr>
-        <tr><td class="label">Verification Status</td><td class="value" style="color:#16a34a;">VERIFIED & CLOSED</td></tr>
+        <tr><td class="label">Verification Status</td><td class="value" style="color:#16a34a; font-size:14px;">VERIFIED & CLOSED</td></tr>
       </table>
 
-      <p style="font-size:13px; color:#475569;">
-        You can now log into your <strong>Shop Dashboard -> Applied Services</strong> to view or print the verified output document.
-      </p>
+      <div class="box box-success">
+        <p style="margin:0; font-size:12px; color:#166534;">
+          You can now log into your <strong>Shop Dashboard -> Applied Services</strong> to view or print the verified output document.
+        </p>
+      </div>
     `
   );
 
@@ -688,13 +867,14 @@ export const sendPasswordChangedEmail = async ({ toEmail, userName }) => {
   const html = wrapTemplate(
     'Security Notification',
     `
-      <h2 style="margin-top:0; color:#0f172a; font-size:18px;">Hello ${userName || 'User'},</h2>
-      <p style="font-size:14px; color:#334155;">
+      <div style="text-align:right;"><span class="badge badge-warning">Security Alert</span></div>
+      <h2 style="margin-top:0; color:#0f172a; font-size:20px; font-weight:800;">Hello ${userName || 'User'}, 👋</h2>
+      <p style="font-size:14px; color:#475569; line-height:1.6;">
         Your password for <strong>V2Online Portal</strong> was successfully changed.
       </p>
 
-      <div class="box" style="background:#fffbebf8; border-color:#fef08a;">
-        <p style="margin:0; font-size:12px; color:#a16207;">
+      <div class="box box-warning">
+        <p style="margin:0; font-size:12px; color:#92400e; line-height:1.5;">
           <strong>⚠️ Security Notice:</strong> If you did not perform this action, please contact Portal Administration or Support immediately to secure your account.
         </p>
       </div>
