@@ -1,5 +1,9 @@
 import nodemailer from 'nodemailer';
+import dns from 'dns';
 import pool from '../config/db.js';
+
+// Force IPv4 DNS resolution - Render free tier does not support IPv6 outbound connections
+dns.setDefaultResultOrder('ipv4first');
 
 /**
  * Lazy creation of Nodemailer Transporter
