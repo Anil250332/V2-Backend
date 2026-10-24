@@ -20,7 +20,7 @@ export const getWalletTransactions = async (req, res) => {
     `;
 
     const params = [];
-    if (userRole !== 'super_admin' && userRole !== 'manager' && userId) {
+    if (!['super_admin', 'sub_admin', 'manager'].includes(userRole) && userId) {
       query += ' WHERE t.user_id = ?';
       params.push(userId);
     }
@@ -234,11 +234,16 @@ export const refundWallet = async (req, res) => {
   const connection = await pool.getConnection();
   try {
     const { userId, amount, serviceName, appId, remarks } = req.body;
-    const targetUserId = userId || req.user?.id;
+    const targetUserId = userId;
     const refundAmt = parseFloat(amount);
 
     if (!targetUserId) {
       return res.status(400).json({ status: 'error', message: 'Target user ID is required for refund.' });
+    }
+
+    // Koi bhi admin/manager khud ke wallet me refund credit nahi kar sakta
+    if (Number(targetUserId) === Number(req.user?.id)) {
+      return res.status(403).json({ status: 'error', message: 'Self refund is not allowed.' });
     }
 
     if (isNaN(refundAmt) || refundAmt <= 0) {
@@ -419,9 +424,12 @@ export const getWithdrawals = async (req, res) => {
     const userRole = req.user?.role;
 
     let query = `
-      SELECT w.*, u.full_name as userName, u.mobile as userMobile, u.role as userRole
+      SELECT w.*, u.full_name as userName, u.mobile as userMobile, u.role as userRole,
+             v.full_name as verifiedByName, pr.full_name as processedByName
       FROM withdrawal_requests w
       JOIN users u ON w.user_id = u.id
+      LEFT JOIN users v ON w.verified_by = v.id
+      LEFT JOIN users pr ON w.processed_by = pr.id
     `;
 
     const params = [];
@@ -453,6 +461,10 @@ export const getWithdrawals = async (req, res) => {
         status: r.status.toUpperCase(),
         rejectionReason: r.rejection_reason || null,
         utrNo: r.utr_no || null,
+        verifiedByName: r.verifiedByName || null,
+        verifiedAt: r.verified_at || null,
+        processedByName: r.processedByName || null,
+        processedAt: r.processed_at || null,
         createdAt: new Date(r.created_at).toLocaleString('en-IN', {
           day: '2-digit', month: 'short', year: 'numeric',
           hour: '2-digit', minute: '2-digit', hour12: true
@@ -466,20 +478,81 @@ export const getWithdrawals = async (req, res) => {
 };
 
 /**
- * 7. Process Withdrawal Request (Approve / Reject) (Admin / Manager)
- * PATCH /api/wallet/withdrawals/:id/process
+ * Rejected withdrawal ka amount user wallet me wapas (same DB transaction ke andar)
  */
-export const processWithdrawal = async (req, res) => {
-  const connection = await pool.getConnection();
+const refundWithdrawal = async (connection, reqItem, reason) => {
+  const refundAmt = parseFloat(reqItem.amount);
+  const [wallets] = await connection.query('SELECT id, balance FROM wallets WHERE user_id = ? FOR UPDATE', [reqItem.user_id]);
+
+  let walletId;
+  let opening = 0.00;
+  if (wallets.length === 0) {
+    const [wIns] = await connection.query('INSERT INTO wallets (user_id, balance) VALUES (?, 0.00)', [reqItem.user_id]);
+    walletId = wIns.insertId;
+  } else {
+    walletId = wallets[0].id;
+    opening = parseFloat(wallets[0].balance);
+  }
+  const closing = opening + refundAmt;
+
+  await connection.query('UPDATE wallets SET balance = ? WHERE id = ?', [closing, walletId]);
+
+  const year = new Date().getFullYear();
+  const [txnRes] = await connection.query(
+    `INSERT INTO transactions (
+      txn_no, wallet_id, user_id, type, category, amount,
+      opening_balance, closing_balance, status, remarks
+    ) VALUES (?, ?, ?, 'credit', 'refund', ?, ?, ?, 'success', ?)`,
+    [
+      'TXN-TEMP',
+      walletId,
+      reqItem.user_id,
+      refundAmt,
+      opening,
+      closing,
+      `Refund: Rejected Withdrawal Request [${reqItem.req_no}]: ${reason}`
+    ]
+  );
+  const txnNo = `TXN-${year}-${1000 + txnRes.insertId}`;
+  await connection.query('UPDATE transactions SET txn_no = ? WHERE id = ?', [txnNo, txnRes.insertId]);
+};
+
+// Withdrawal status email (non-blocking)
+const notifyWithdrawalStatus = (reqItem, status, note) => {
+  pool.query('SELECT full_name, email FROM users WHERE id = ?', [reqItem.user_id])
+    .then(([uRows]) => {
+      if (uRows.length > 0 && uRows[0].email) {
+        sendWithdrawalStatusEmail({
+          toEmail: uRows[0].email,
+          operatorName: uRows[0].full_name,
+          amount: reqItem.amount,
+          status,
+          note
+        }).catch(err => console.error('Withdrawal status email error:', err.message));
+      }
+    })
+    .catch(err => console.error('Fetch user for withdrawal email error:', err.message));
+};
+
+/**
+ * 7. Step 1 — Manager Verify / Reject Withdrawal Request
+ * PATCH /api/wallet/withdrawals/:id/verify
+ * pending -> manager_verified (approve)  |  pending -> rejected + refund (reject)
+ */
+export const verifyWithdrawal = async (req, res) => {
+  const { id } = req.params;
+  const { action, rejectionReason } = req.body; // action: 'approve' | 'reject'
+
+  if (!['approve', 'reject'].includes(action)) {
+    return res.status(400).json({ status: 'error', message: 'Action must be "approve" or "reject".' });
+  }
+  if (action === 'reject' && !String(rejectionReason || '').trim()) {
+    return res.status(400).json({ status: 'error', message: 'Rejection reason zaroori hai.' });
+  }
+
+  let connection;
   try {
-    const { id } = req.params;
-    const { action, utrNo, rejectionReason } = req.body; // action: 'approve' | 'reject'
-    const processedBy = req.user?.id || 1;
-
-    if (!['approve', 'reject'].includes(action)) {
-      return res.status(400).json({ status: 'error', message: 'Action must be "approve" or "reject".' });
-    }
-
+    connection = await pool.getConnection();
     await connection.beginTransaction();
 
     const [rows] = await connection.query('SELECT * FROM withdrawal_requests WHERE id = ? FOR UPDATE', [id]);
@@ -496,81 +569,122 @@ export const processWithdrawal = async (req, res) => {
 
     if (action === 'approve') {
       await connection.query(
-        `UPDATE withdrawal_requests 
-         SET status = 'processed', utr_no = ?, processed_by = ?, processed_at = NOW() 
+        `UPDATE withdrawal_requests
+         SET status = 'manager_verified', verified_by = ?, verified_at = NOW()
          WHERE id = ?`,
-        [utrNo || 'BANK_SETTLED', processedBy, id]
+        [req.user.id, id]
       );
     } else {
-      // Reject withdrawal -> Refund money back to user wallet
-      const refundAmt = parseFloat(reqItem.amount);
-      const targetUserId = reqItem.user_id;
-
-      const [wallets] = await connection.query('SELECT id, balance FROM wallets WHERE user_id = ? FOR UPDATE', [targetUserId]);
-      if (wallets.length > 0) {
-        const walletId = wallets[0].id;
-        const opening = parseFloat(wallets[0].balance);
-        const closing = opening + refundAmt;
-
-        await connection.query('UPDATE wallets SET balance = ? WHERE id = ?', [closing, walletId]);
-
-        const year = new Date().getFullYear();
-        const [txnRes] = await connection.query(
-          `INSERT INTO transactions (
-            txn_no, wallet_id, user_id, type, category, amount,
-            opening_balance, closing_balance, status, remarks
-          ) VALUES (?, ?, ?, 'credit', 'refund', ?, ?, ?, 'success', ?)`,
-          [
-            'TXN-TEMP',
-            walletId,
-            targetUserId,
-            refundAmt,
-            opening,
-            closing,
-            `Refund: Rejected Withdrawal Request [${reqItem.req_no}]: ${rejectionReason || 'Rejected by Admin'}`
-          ]
-        );
-
-        const txnNo = `TXN-${year}-${1000 + txnRes.insertId}`;
-        await connection.query('UPDATE transactions SET txn_no = ? WHERE id = ?', [txnNo, txnRes.insertId]);
-      }
-
+      const reason = String(rejectionReason).trim();
+      await refundWithdrawal(connection, reqItem, reason);
       await connection.query(
-        `UPDATE withdrawal_requests 
-         SET status = 'rejected', rejection_reason = ?, processed_by = ?, processed_at = NOW() 
+        `UPDATE withdrawal_requests
+         SET status = 'rejected', rejection_reason = ?, verified_by = ?, verified_at = NOW()
          WHERE id = ?`,
-        [rejectionReason || 'Rejected by Admin', processedBy, id]
+        [reason, req.user.id, id]
       );
     }
 
     await connection.commit();
 
-    // Send Withdrawal Status Email to Operator/User (non-blocking)
-    pool.query('SELECT full_name, email FROM users WHERE id = ?', [reqItem.user_id])
-      .then(([uRows]) => {
-        if (uRows.length > 0 && uRows[0].email) {
-          sendWithdrawalStatusEmail({
-            toEmail: uRows[0].email,
-            operatorName: uRows[0].full_name,
-            amount: reqItem.amount,
-            status: action === 'approve' ? 'approved' : 'rejected',
-            note: action === 'approve' ? `UTR / Ref: ${utrNo || 'BANK_SETTLED'}` : rejectionReason
-          }).catch(err => console.error('Withdrawal status email error:', err.message));
-        }
-      })
-      .catch(err => console.error('Fetch user for withdrawal email error:', err.message));
+    if (action === 'reject') notifyWithdrawalStatus(reqItem, 'rejected', String(rejectionReason).trim());
 
     return res.status(200).json({
       status: 'success',
-      message: `Withdrawal request ${action === 'approve' ? 'approved & marked processed' : 'rejected and amount refunded to wallet'}.`
+      message: action === 'approve'
+        ? 'Withdrawal request verified & forwarded to Admin for final payout release.'
+        : 'Withdrawal request rejected and amount refunded to wallet.'
     });
   } catch (error) {
-    await connection.rollback();
-    console.error('Process Withdrawal Error:', error);
+    if (connection) await connection.rollback();
+    console.error('Verify Withdrawal Error:', error);
     return res.status(500).json({ status: 'error', message: error.message });
   } finally {
-    connection.release();
+    if (connection) connection.release();
   }
 };
 
+/**
+ * 8. Step 2 — Admin Final Payout Release (UTR) / Reject
+ * PATCH /api/wallet/withdrawals/:id/process
+ * manager_verified -> processed (approve, UTR mandatory)  |  pending / manager_verified -> rejected + refund
+ */
+export const processWithdrawal = async (req, res) => {
+  const { id } = req.params;
+  const { action, utrNo, rejectionReason } = req.body; // action: 'approve' | 'reject'
 
+  if (!['approve', 'reject'].includes(action)) {
+    return res.status(400).json({ status: 'error', message: 'Action must be "approve" or "reject".' });
+  }
+  const cleanUtr = String(utrNo || '').trim();
+  if (action === 'approve' && cleanUtr.length < 6) {
+    return res.status(400).json({ status: 'error', message: 'Valid Bank UTR / Reference number (min 6 characters) zaroori hai.' });
+  }
+  if (action === 'reject' && !String(rejectionReason || '').trim()) {
+    return res.status(400).json({ status: 'error', message: 'Rejection reason zaroori hai.' });
+  }
+
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    await connection.beginTransaction();
+
+    const [rows] = await connection.query('SELECT * FROM withdrawal_requests WHERE id = ? FOR UPDATE', [id]);
+    if (rows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ status: 'error', message: 'Withdrawal request not found.' });
+    }
+
+    const reqItem = rows[0];
+    if (action === 'approve' && reqItem.status !== 'manager_verified') {
+      await connection.rollback();
+      return res.status(400).json({
+        status: 'error',
+        message: reqItem.status === 'pending'
+          ? 'Ye request abhi Manager dwara verify nahi hui hai. Pehle Manager verification zaroori hai.'
+          : `Withdrawal request is already ${reqItem.status}.`
+      });
+    }
+    if (action === 'reject' && !['pending', 'manager_verified'].includes(reqItem.status)) {
+      await connection.rollback();
+      return res.status(400).json({ status: 'error', message: `Withdrawal request is already ${reqItem.status}.` });
+    }
+
+    if (action === 'approve') {
+      await connection.query(
+        `UPDATE withdrawal_requests
+         SET status = 'processed', utr_no = ?, processed_by = ?, processed_at = NOW()
+         WHERE id = ?`,
+        [cleanUtr, req.user.id, id]
+      );
+    } else {
+      const reason = String(rejectionReason).trim();
+      await refundWithdrawal(connection, reqItem, reason);
+      await connection.query(
+        `UPDATE withdrawal_requests
+         SET status = 'rejected', rejection_reason = ?, processed_by = ?, processed_at = NOW()
+         WHERE id = ?`,
+        [reason, req.user.id, id]
+      );
+    }
+
+    await connection.commit();
+
+    notifyWithdrawalStatus(
+      reqItem,
+      action === 'approve' ? 'approved' : 'rejected',
+      action === 'approve' ? `UTR / Ref: ${cleanUtr}` : String(rejectionReason).trim()
+    );
+
+    return res.status(200).json({
+      status: 'success',
+      message: `Withdrawal request ${action === 'approve' ? 'released & marked processed' : 'rejected and amount refunded to wallet'}.`
+    });
+  } catch (error) {
+    if (connection) await connection.rollback();
+    console.error('Process Withdrawal Error:', error);
+    return res.status(500).json({ status: 'error', message: error.message });
+  } finally {
+    if (connection) connection.release();
+  }
+};

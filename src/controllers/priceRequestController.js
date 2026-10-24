@@ -45,6 +45,20 @@ export const createPriceRequest = async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'Kripya valid price enter karein.' });
     }
 
+    // Ownership check: operator sirf apni assigned service / assignment ke liye request kar sakta hai
+    const [ownRows] = targetAssignmentId
+      ? await pool.query(
+          'SELECT id FROM operator_assignments WHERE id = ? AND operator_id = ? AND sub_service_id = ?',
+          [targetAssignmentId, operatorId, targetSubServiceId]
+        )
+      : await pool.query(
+          'SELECT id FROM operator_assignments WHERE operator_id = ? AND sub_service_id = ? LIMIT 1',
+          [operatorId, targetSubServiceId]
+        );
+    if (ownRows.length === 0) {
+      return res.status(403).json({ status: 'error', message: 'Ye service / location aapko assigned nahi hai.' });
+    }
+
     // Check if duplicate pending request exists
     const [existing] = await pool.query(
       `SELECT id FROM operator_price_requests 
@@ -278,19 +292,26 @@ export const reviewPriceRequest = async (req, res) => {
       [status, finalApprovedPrice, remarks, reviewerId, id]
     );
 
-    // If approved, update effective price in database for assignment, sub_service, and parent service
+    // If approved, update effective price in database
     if (status === 'approved') {
       const subId = pr.sub_service_id;
+      const isLocationWise = ['area_wise', 'ward_wise'].includes(pr.routing_mode);
 
-      if (pr.assignment_id) {
-        // Update specific area or ward operator assignment custom fee
+      if (isLocationWise && pr.assignment_id) {
+        // Area / Ward wise: sirf usi location assignment ka price badlega (baaki areas / operators untouched)
         await connection.query(
-          'UPDATE operator_assignments SET custom_fee = ? WHERE id = ?',
-          [finalApprovedPrice, pr.assignment_id]
+          'UPDATE operator_assignments SET custom_fee = ? WHERE id = ? AND operator_id = ?',
+          [finalApprovedPrice, pr.assignment_id, pr.operator_id]
         );
-      }
-
-      if (subId) {
+      } else if (isLocationWise && subId) {
+        // Location label se match (assignment id na ho to) — sirf isi operator ke assignments
+        await connection.query(
+          `UPDATE operator_assignments SET custom_fee = ?
+           WHERE sub_service_id = ? AND operator_id = ? AND (area_label = ? OR ward_no = ?)`,
+          [finalApprovedPrice, subId, pr.operator_id, pr.area_or_ward_label, pr.area_or_ward_label]
+        );
+      } else if (subId) {
+        // Single mode: service ka ek hi price hota hai -> base fee + assignments sync
         // Update sub_services table fee
         await connection.query(
           'UPDATE sub_services SET fee = ? WHERE id = ?',
@@ -301,11 +322,14 @@ export const reviewPriceRequest = async (req, res) => {
           'UPDATE operator_assignments SET custom_fee = ? WHERE sub_service_id = ?',
           [finalApprovedPrice, subId]
         );
-        // Sync parent services table fee
-        await connection.query(
-          'UPDATE services SET fee = ? WHERE id = (SELECT service_id FROM sub_services WHERE id = ?)',
-          [finalApprovedPrice, subId]
+        // Parent service fee sirf direct service (ek hi sub-service) ke case me sync
+        const [[parent]] = await connection.query(
+          'SELECT service_id, (SELECT COUNT(*) FROM sub_services x WHERE x.service_id = ss.service_id) as subCount FROM sub_services ss WHERE ss.id = ?',
+          [subId]
         );
+        if (parent && Number(parent.subCount) === 1) {
+          await connection.query('UPDATE services SET fee = ? WHERE id = ?', [finalApprovedPrice, parent.service_id]);
+        }
       }
     }
 

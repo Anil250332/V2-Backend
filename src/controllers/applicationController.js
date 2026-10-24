@@ -1,4 +1,13 @@
+import fs from 'fs';
 import applicationService from '../services/applicationService.js';
+
+// Request fail hone par (e.g. insufficient balance) upload hui files disk se hata do
+const cleanupUploadedFiles = (req) => {
+  if (!Array.isArray(req.files)) return;
+  req.files.forEach(file => {
+    if (file?.path) fs.unlink(file.path, () => {});
+  });
+};
 
 /**
  * Application Controller
@@ -76,6 +85,7 @@ export const applyService = async (req, res) => {
     });
   } catch (error) {
     console.error('Apply Service Error:', error);
+    cleanupUploadedFiles(req);
     return res.status(500).json({ status: 'error', message: error.message || 'Failed to submit service application.' });
   }
 };
@@ -128,7 +138,10 @@ export const getOperatorQueue = async (req, res) => {
  */
 export const getVerificationQueue = async (req, res) => {
   try {
-    const list = await applicationService.getVerificationQueue();
+    // Optional ?limit= (default 100, max 1000) — commissions ledger / verification ke liye zyada records
+    const requested = parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(requested) ? Math.min(Math.max(requested, 1), 1000) : 100;
+    const list = await applicationService.getVerificationQueue({ limit });
     return res.status(200).json({
       status: 'success',
       data: list
@@ -147,6 +160,17 @@ export const getApplicationDetails = async (req, res) => {
   try {
     const { id } = req.params;
     const app = await applicationService.getApplicationDetails(id);
+
+    // Ownership check: Agent / Operator / Distributor sirf apni linked application dekh sakte hain
+    const { id: userId, role } = req.user || {};
+    const isOwner =
+      (role === 'agent' && Number(app.agent_id) === Number(userId)) ||
+      (role === 'operator' && Number(app.operator_id) === Number(userId)) ||
+      (role === 'distributor' && Number(app.distributor_id) === Number(userId));
+    if (!['super_admin', 'sub_admin', 'manager'].includes(role) && !isOwner) {
+      return res.status(404).json({ status: 'error', message: 'Application not found.' });
+    }
+
     return res.status(200).json({
       status: 'success',
       data: app
@@ -167,6 +191,19 @@ export const completeApplication = async (req, res) => {
     const operatorId = req.user?.id;
     const { govtAckNo, govt_ack_no, outputNote, output_note } = req.body;
 
+    // Operator dwara bhare gaye output text fields (multipart me JSON string aata hai)
+    let outputValues = {};
+    if (req.body.operatorInputValues) {
+      try {
+        const parsed = typeof req.body.operatorInputValues === 'string'
+          ? JSON.parse(req.body.operatorInputValues)
+          : req.body.operatorInputValues;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) outputValues = parsed;
+      } catch {
+        outputValues = {};
+      }
+    }
+
     const deliverableDocs = [];
     if (req.files && Array.isArray(req.files)) {
       req.files.forEach(file => {
@@ -185,8 +222,10 @@ export const completeApplication = async (req, res) => {
     await applicationService.completeApplication({
       appId: id,
       operatorId,
+      isOperator: req.user?.role === 'operator',
       govtAckNo: govtAckNo || govt_ack_no,
       outputNote: outputNote || output_note,
+      outputValues,
       outputFiles: deliverableDocs
     });
 
@@ -196,6 +235,7 @@ export const completeApplication = async (req, res) => {
     });
   } catch (error) {
     console.error('Complete Application Error:', error);
+    cleanupUploadedFiles(req);
     return res.status(500).json({ status: 'error', message: error.message });
   }
 };
@@ -231,7 +271,12 @@ export const rejectApplication = async (req, res) => {
     const { reason } = req.body;
     const rejectedBy = req.user?.id;
 
-    await applicationService.rejectApplication({ appId: id, reason, rejectedBy });
+    await applicationService.rejectApplication({
+      appId: id,
+      reason,
+      rejectedBy,
+      isOperator: req.user?.role === 'operator'
+    });
 
     return res.status(200).json({
       status: 'success',

@@ -17,8 +17,9 @@ export const authenticateToken = async (req, res, next) => {
     }
 
     const decoded = verifyToken(token);
+    // Session khatam (invalid / expired / suspended / pending) -> 401 taaki frontend auto logout kare
     if (!decoded) {
-      return res.status(403).json({
+      return res.status(401).json({
         status: 'error',
         message: 'Invalid or expired token. Please login again.'
       });
@@ -26,7 +27,7 @@ export const authenticateToken = async (req, res, next) => {
 
     // Verify user exists and is active in database
     const [rows] = await pool.query(
-      'SELECT id, uuid, role, full_name, mobile, email, shop_name, district, tehsil, ward_no, approval_status, is_active, is_online FROM users WHERE id = ?',
+      'SELECT id, uuid, role, full_name, mobile, email, shop_name, district, tehsil, ward_no, distributor_id, approval_status, is_active, is_online FROM users WHERE id = ?',
       [decoded.id]
     );
 
@@ -40,14 +41,14 @@ export const authenticateToken = async (req, res, next) => {
     const user = rows[0];
 
     if (!user.is_active) {
-      return res.status(403).json({
+      return res.status(401).json({
         status: 'error',
         message: 'Aapka account suspended / deactivated hai. Kripya Admin se sampark karein.'
       });
     }
 
     if (user.approval_status !== 'approved') {
-      return res.status(403).json({
+      return res.status(401).json({
         status: 'error',
         message: 'Aapka account approval ke liye pending hai. Approval ke baad hi access milega.'
       });

@@ -16,7 +16,7 @@ class ApplicationService {
 
     if (!targetSubServiceId && serviceId) {
       const [subRows] = await pool.query(
-        'SELECT id FROM sub_services WHERE service_id = ? LIMIT 1',
+        'SELECT id FROM sub_services WHERE service_id = ? AND is_active = true ORDER BY id ASC LIMIT 1',
         [serviceId]
       );
       if (subRows.length > 0) {
@@ -32,7 +32,8 @@ class ApplicationService {
     const [subRows] = await pool.query(
       `SELECT ss.id, ss.service_id, ss.name as subServiceName, ss.fee, ss.agent_fee,
               ss.admin_commission_percentage, ss.operator_assignment_mode as subMode,
-              s.name as serviceName, s.operator_assignment_mode as serviceMode
+              s.name as serviceName, s.operator_assignment_mode as serviceMode,
+              ss.is_active as subActive, s.is_active as serviceActive
        FROM sub_services ss
        JOIN services s ON ss.service_id = s.id
        WHERE ss.id = ?`,
@@ -44,6 +45,11 @@ class ApplicationService {
     }
 
     const sInfo = subRows[0];
+
+    // Disabled service / sub-service par application allowed nahi
+    if (!sInfo.subActive || !sInfo.serviceActive) {
+      throw new Error('Ye service abhi band (inactive) hai. Kripya baad me try karein.');
+    }
     const serviceTitle = sInfo.serviceName || sInfo.subServiceName || 'Government Service';
 
     // 2. Resolve Operator Assignment & Pricing based on routing mode
@@ -60,6 +66,7 @@ class ApplicationService {
         FROM operator_assignments oa
         JOIN users u ON oa.operator_id = u.id
         WHERE oa.sub_service_id = ? AND oa.ward_no = ? AND oa.is_active = true AND u.is_active = true
+        ORDER BY oa.id ASC
         LIMIT 1
       `;
       opParams.push(targetSubServiceId, String(wardNo));
@@ -69,6 +76,7 @@ class ApplicationService {
         FROM operator_assignments oa
         JOIN users u ON oa.operator_id = u.id
         WHERE oa.sub_service_id = ? AND oa.area_label = ? AND oa.is_active = true AND u.is_active = true
+        ORDER BY oa.id ASC
         LIMIT 1
       `;
       opParams.push(targetSubServiceId, String(areaLabel));
@@ -78,6 +86,7 @@ class ApplicationService {
         FROM operator_assignments oa
         JOIN users u ON oa.operator_id = u.id
         WHERE oa.sub_service_id = ? AND oa.is_active = true AND u.is_active = true
+        ORDER BY oa.id ASC
         LIMIT 1
       `;
       opParams.push(targetSubServiceId);
@@ -97,6 +106,7 @@ class ApplicationService {
          JOIN users u ON oa.operator_id = u.id
          JOIN sub_services ss ON oa.sub_service_id = ss.id
          WHERE ss.service_id = ? AND oa.is_active = true AND u.is_active = true
+         ORDER BY oa.id ASC
          LIMIT 1`,
         [sInfo.service_id]
       );
@@ -109,7 +119,8 @@ class ApplicationService {
     }
 
     // Effective fee calculation (uses custom approved operator fee if present)
-    const fee = customOperatorFee !== null ? customOperatorFee : parseFloat(sInfo.fee || sInfo.agent_fee || 0);
+    const baseFee = parseFloat(sInfo.fee) > 0 ? parseFloat(sInfo.fee) : parseFloat(sInfo.agent_fee || 0);
+    const fee = customOperatorFee !== null ? customOperatorFee : baseFee;
     const commPercent = parseFloat(sInfo.admin_commission_percentage || 0);
     const adminProfit = (fee * commPercent) / 100;
     const operatorPayout = fee - adminProfit;
@@ -146,10 +157,10 @@ class ApplicationService {
       sendWalletDebitEmail({
         toEmail: agent.email,
         shopName: agent.shop_name || agent.full_name,
-        applicationNo: result.application_no,
+        applicationNo: result.applicationNo,
         serviceName: serviceTitle,
         amountDeducted: fee,
-        remainingBalance: result.newBalance
+        remainingBalance: result.closingBalance
       }).catch(err => console.error('Agent debit email error:', err.message));
     }
 
@@ -161,7 +172,7 @@ class ApplicationService {
             sendTaskAssignmentEmail({
               toEmail: ops[0].email,
               operatorName: ops[0].full_name,
-              applicationNo: result.application_no,
+              applicationNo: result.applicationNo,
               serviceName: serviceTitle,
               shopName: agent.shop_name || agent.full_name
             }).catch(err => console.error('Operator task assignment email error:', err.message));
@@ -177,21 +188,21 @@ class ApplicationService {
    * Get applications for Agent tracking
    */
   async getAgentApplications(agentId, { status } = {}) {
-    return await applicationRepository.getApplications({ agentId, status });
+    return await applicationRepository.getApplications({ agentId, status, limit: 500 });
   }
 
   /**
    * Get applications for Operator work queue
    */
   async getOperatorQueue(operatorId, { status } = {}) {
-    return await applicationRepository.getApplications({ operatorId, status });
+    return await applicationRepository.getApplications({ operatorId, status, limit: 500 });
   }
 
   /**
    * Get applications for Admin / Manager task verification queue
    */
-  async getVerificationQueue() {
-    return await applicationRepository.getApplications();
+  async getVerificationQueue({ limit } = {}) {
+    return await applicationRepository.getApplications({ limit });
   }
 
   /**
@@ -206,10 +217,12 @@ class ApplicationService {
   /**
    * Operator completes application with certificate/deliverable uploads
    */
-  async completeApplication({ appId, operatorId, govtAckNo, outputNote, outputFiles }) {
+  async completeApplication({ appId, operatorId, isOperator, govtAckNo, outputNote, outputValues, outputFiles }) {
     const res = await applicationRepository.completeApplication({
       appId,
       operatorId,
+      isOperator,
+      outputValues,
       govtAckNo,
       outputNote,
       outputFiles
@@ -225,7 +238,7 @@ class ApplicationService {
             toEmail: agents[0].email,
             shopOwnerName: agents[0].full_name,
             applicationNo: app.application_no,
-            serviceName: app.service_name || 'Government Service',
+            serviceName: app.serviceName || 'Government Service',
             status: 'completed'
           }).catch(err => console.error('Task completed email error:', err.message));
         }
@@ -256,7 +269,7 @@ class ApplicationService {
             toEmail: agents[0].email,
             shopOwnerName: agents[0].full_name,
             applicationNo: app.application_no,
-            serviceName: app.service_name || 'Government Service'
+            serviceName: app.serviceName || 'Government Service'
           }).catch(err => console.error('Task verified email error:', err.message));
         }
       }
@@ -270,11 +283,12 @@ class ApplicationService {
   /**
    * Reject application -> Auto refund agent wallet
    */
-  async rejectApplication({ appId, reason, rejectedBy }) {
+  async rejectApplication({ appId, reason, rejectedBy, isOperator }) {
     const res = await applicationRepository.rejectAndRefundAgentWallet({
       appId,
       reason,
-      rejectedBy
+      rejectedBy,
+      isOperator
     });
 
     // Notify Shop Agent about rejection
@@ -287,7 +301,7 @@ class ApplicationService {
             toEmail: agents[0].email,
             shopOwnerName: agents[0].full_name,
             applicationNo: app.application_no,
-            serviceName: app.service_name || 'Government Service',
+            serviceName: app.serviceName || 'Government Service',
             status: 'rejected'
           }).catch(err => console.error('Task rejection email error:', err.message));
         }

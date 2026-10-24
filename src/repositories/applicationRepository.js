@@ -1,5 +1,8 @@
 import pool from '../config/db.js';
 
+// Statuses jinme application abhi open hai (operator complete / reject kar sakta hai)
+const COMPLETABLE_STATUSES = ['pending', 'assigned', 'processing', 'correction_required'];
+
 /**
  * Application Repository
  * Handles direct MySQL queries for applications, documents, transactions, and wallets
@@ -250,7 +253,6 @@ class ApplicationRepository {
    * Get single application by ID
    */
   async getApplicationById(id) {
-    const list = await this.getApplications({ limit: 1 });
     const [rows] = await pool.query(
       `SELECT 
         a.*,
@@ -292,26 +294,47 @@ class ApplicationRepository {
   /**
    * Operator marks application completed with output reference & deliverable files
    */
-  async completeApplication({ appId, operatorId, govtAckNo, outputNote, outputFiles = [] }) {
+  async completeApplication({ appId, operatorId, isOperator = false, govtAckNo, outputNote, outputValues = {}, outputFiles = [] }) {
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
 
+      // Lock row & validate status (completed / verified / rejected app dobara complete nahi hogi)
+      const [apps] = await connection.query(
+        'SELECT id, status, operator_id FROM applications WHERE id = ? FOR UPDATE',
+        [appId]
+      );
+      if (apps.length === 0) throw new Error('Application not found.');
+      const app = apps[0];
+
+      if (!COMPLETABLE_STATUSES.includes(app.status)) {
+        throw new Error(`Application is already ${app.status || 'closed'} and cannot be completed again.`);
+      }
+
+      // Operator sirf apni assigned application complete kar sakta hai
+      if (isOperator && Number(app.operator_id) !== Number(operatorId)) {
+        throw new Error('This application is not assigned to you.');
+      }
+      if (!isOperator && app.operator_id && Number(app.operator_id) !== Number(operatorId)) {
+        throw new Error('This application is assigned to another operator.');
+      }
+
       const outputData = {
         note: outputNote || 'Work completed successfully',
         completedAt: new Date().toISOString(),
-        files: outputFiles
+        files: outputFiles,
+        outputValues
       };
 
       await connection.query(
-        `UPDATE applications 
+        `UPDATE applications
          SET status = 'completed',
              operator_id = COALESCE(operator_id, ?),
              govt_ack_no = ?,
              completion_output_data = ?,
              completed_at = NOW()
-         WHERE id = ? AND (operator_id = ? OR operator_id IS NULL)`,
-        [operatorId || null, govtAckNo || null, JSON.stringify(outputData), appId, operatorId]
+         WHERE id = ?`,
+        [operatorId || null, govtAckNo || null, JSON.stringify(outputData), app.id]
       );
 
       // Insert deliverable document records
@@ -363,6 +386,10 @@ class ApplicationRepository {
 
       if (app.status === 'verified') {
         throw new Error('This application has already been verified and operator payout was credited.');
+      }
+      // Sirf operator dwara completed application hi verify hogi (rejected/pending par payout nahi)
+      if (app.status !== 'completed') {
+        throw new Error(`Only completed applications can be verified. Current status: ${app.status || 'unknown'}.`);
       }
 
       const opId = app.operator_id;
@@ -431,14 +458,14 @@ class ApplicationRepository {
   /**
    * Reject application -> Auto-refund agent wallet atomically
    */
-  async rejectAndRefundAgentWallet({ appId, reason, rejectedBy }) {
+  async rejectAndRefundAgentWallet({ appId, reason, rejectedBy, isOperator = false }) {
     const connection = await pool.getConnection();
     try {
       await connection.beginTransaction();
 
       // 1. Fetch application details
       const [apps] = await connection.query(
-        `SELECT id, application_no, agent_id, fee_deducted, status FROM applications WHERE id = ? FOR UPDATE`,
+        `SELECT id, application_no, agent_id, operator_id, fee_deducted, status FROM applications WHERE id = ? FOR UPDATE`,
         [appId]
       );
 
@@ -447,6 +474,19 @@ class ApplicationRepository {
 
       if (app.status === 'rejected') {
         throw new Error('Application is already rejected.');
+      }
+      // Verified application par operator payout ho chuka hai -> reject/refund allowed nahi (double payout se bachav)
+      if (app.status === 'verified') {
+        throw new Error('Application is already verified and operator payout was released. It cannot be rejected now.');
+      }
+      // Operator sirf apni assigned & open application reject kar sakta hai
+      if (isOperator) {
+        if (Number(app.operator_id) !== Number(rejectedBy)) {
+          throw new Error('This application is not assigned to you.');
+        }
+        if (!COMPLETABLE_STATUSES.includes(app.status)) {
+          throw new Error(`Application is already ${app.status || 'closed'} and cannot be rejected by operator.`);
+        }
       }
 
       // 2. Mark application rejected

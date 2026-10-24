@@ -10,6 +10,22 @@ const otpStore = new Map();
 // In-memory temporary store for Password Reset OTPs (Email -> { otp, userId, userName, expiresAt })
 const passwordResetOtpStore = new Map();
 
+// Brute-force protection: itne galat attempts ke baad OTP session khatam
+const MAX_OTP_ATTEMPTS = 5;
+
+/**
+ * Galat OTP attempt count karta hai. Limit cross hone par entry delete kar deta hai.
+ * Returns true agar ab session block ho gaya.
+ */
+const registerFailedOtpAttempt = (store, key, entry) => {
+  entry.attempts = (entry.attempts || 0) + 1;
+  if (entry.attempts >= MAX_OTP_ATTEMPTS) {
+    store.delete(key);
+    return true;
+  }
+  return false;
+};
+
 /**
  * 1. Step 1: Request OTP for Self-Registration (Agent or Operator)
  * POST /api/auth/register-otp
@@ -25,6 +41,14 @@ export const requestRegistrationOtp = async (req, res) => {
       return res.status(400).json({
         status: 'error',
         message: 'Full name and Mobile number are required.'
+      });
+    }
+
+    // OTP sirf email par bheja jata hai (WhatsApp service disabled), isliye email mandatory
+    if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email).trim())) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Valid Email Address zaroori hai. OTP isi email par bheja jayega.'
       });
     }
 
@@ -45,7 +69,7 @@ export const requestRegistrationOtp = async (req, res) => {
     }
 
     // Generate secure 6-digit OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = crypto.randomInt(100000, 1000000).toString();
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes validity
 
     // Store in memory
@@ -75,8 +99,7 @@ export const requestRegistrationOtp = async (req, res) => {
 
     return res.status(200).json({
       status: 'success',
-      message: `OTP sent successfully${email ? ' to email ' + email : ''}.`,
-      debug_otp: otp // ⚠️ TEMPORARY: Remove before production
+      message: `OTP sent successfully to email ${email}.`
     });
   } catch (error) {
     console.error('Request OTP Error:', error);
@@ -126,10 +149,13 @@ export const verifyRegistration = async (req, res) => {
       });
     }
 
-    if (storedOtpEntry.otp !== otp.trim()) {
+    if (storedOtpEntry.otp !== String(otp).trim()) {
+      const blocked = registerFailedOtpAttempt(otpStore, mobile, storedOtpEntry);
       return res.status(400).json({
         status: 'error',
-        message: 'Galat OTP enter kiya gaya hai. Kripya sahi OTP daalein.'
+        message: blocked
+          ? 'Bahut zyada galat attempts. Kripya naya OTP request karein.'
+          : 'Galat OTP enter kiya gaya hai. Kripya sahi OTP daalein.'
       });
     }
 
@@ -464,7 +490,7 @@ export const requestForgotPasswordOtp = async (req, res) => {
     const user = users[0];
 
     // Generate secure 6-digit OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = crypto.randomInt(100000, 1000000).toString();
     const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes validity
 
     // Store in memory
@@ -526,10 +552,13 @@ export const verifyForgotPasswordOtp = async (req, res) => {
       });
     }
 
-    if (storedEntry.otp !== otp.trim()) {
+    if (storedEntry.otp !== String(otp).trim()) {
+      const blocked = registerFailedOtpAttempt(passwordResetOtpStore, cleanEmail, storedEntry);
       return res.status(400).json({
         status: 'error',
-        message: 'Galat OTP enter kiya gaya hai. Kripya sahi 6-digit OTP daalein.'
+        message: blocked
+          ? 'Bahut zyada galat attempts. Kripya naya OTP request karein.'
+          : 'Galat OTP enter kiya gaya hai. Kripya sahi 6-digit OTP daalein.'
       });
     }
 
@@ -579,16 +608,20 @@ export const resetPasswordWithOtp = async (req, res) => {
       });
     }
 
-    if (storedEntry.otp !== otp.trim()) {
+    if (storedEntry.otp !== String(otp).trim()) {
+      const blocked = registerFailedOtpAttempt(passwordResetOtpStore, cleanEmail, storedEntry);
       return res.status(400).json({
         status: 'error',
-        message: 'Galat OTP enter kiya gaya hai.'
+        message: blocked
+          ? 'Bahut zyada galat attempts. Kripya naya OTP request karein.'
+          : 'Galat OTP enter kiya gaya hai.'
       });
     }
 
     // Hash new password and update DB
     const newHash = await bcrypt.hash(newPassword, 10);
-    await pool.query('UPDATE users SET password_hash = ? WHERE LOWER(email) = ?', [newHash, cleanEmail]);
+    // Sirf usi user ka password update jisne OTP request kiya tha
+    await pool.query('UPDATE users SET password_hash = ? WHERE id = ?', [newHash, storedEntry.userId]);
 
     // Clean up OTP store session
     passwordResetOtpStore.delete(cleanEmail);

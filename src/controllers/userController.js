@@ -3,6 +3,27 @@ import crypto from 'crypto';
 import pool from '../config/db.js';
 import { sendUserCreatedEmail, sendUserApprovalEmail, sendDistributorUserAddedAlertToAdmin } from '../utils/mailer.js';
 
+// Role hierarchy: user sirf apne se neeche rank wale accounts create / modify kar sakta hai
+const ROLE_RANK = { super_admin: 4, sub_admin: 3, manager: 2, distributor: 1, operator: 1, agent: 1 };
+const canManageRole = (callerRole, targetRole) =>
+  (ROLE_RANK[callerRole] || 0) > (ROLE_RANK[targetRole] || 0);
+
+/**
+ * Target user fetch karke check karta hai ki caller usko manage kar sakta hai ya nahi.
+ * Returns { error } (HTTP response ke liye) ya { target }.
+ */
+const checkManageTarget = async (req, id) => {
+  const [rows] = await pool.query('SELECT id, role FROM users WHERE id = ?', [id]);
+  if (rows.length === 0) return { error: { code: 404, message: 'User not found.' } };
+  if (Number(rows[0].id) === Number(req.user?.id)) {
+    return { error: { code: 403, message: 'Aap apne khud ke account par ye action nahi kar sakte.' } };
+  }
+  if (!canManageRole(req.user?.role, rows[0].role)) {
+    return { error: { code: 403, message: 'Aapko is user ko manage karne ki permission nahi hai.' } };
+  }
+  return { target: rows[0] };
+};
+
 /**
  * 1. Get Users List (Filter by role)
  * GET /api/users?role=distributor,manager,sub_admin
@@ -97,6 +118,13 @@ export const createUser = async (req, res) => {
       });
     }
 
+    if (!canManageRole(req.user?.role, role)) {
+      return res.status(403).json({
+        status: 'error',
+        message: 'Aap apne barabar ya upar ke role ka account create nahi kar sakte.'
+      });
+    }
+
     // Check duplicate mobile
     const [existing] = await connection.query('SELECT id FROM users WHERE mobile = ?', [mobile.trim()]);
     if (existing.length > 0) {
@@ -179,6 +207,11 @@ export const updateUser = async (req, res) => {
     const { id } = req.params;
     const { fullName, email, aadhaar, district, tehsil, wardNo, address, officeName } = req.body;
 
+    const check = await checkManageTarget(req, id);
+    if (check.error) {
+      return res.status(check.error.code).json({ status: 'error', message: check.error.message });
+    }
+
     const updates = [];
     const params = [];
 
@@ -216,6 +249,11 @@ export const toggleUserStatus = async (req, res) => {
   try {
     const { id } = req.params;
 
+    const check = await checkManageTarget(req, id);
+    if (check.error) {
+      return res.status(check.error.code).json({ status: 'error', message: check.error.message });
+    }
+
     const [rows] = await pool.query('SELECT is_active, full_name FROM users WHERE id = ?', [id]);
     if (rows.length === 0) {
       return res.status(404).json({ status: 'error', message: 'User not found.' });
@@ -240,6 +278,11 @@ export const toggleUserStatus = async (req, res) => {
  * PATCH /api/users/:id/approve
  */
 export const approveUser = async (req, res) => {
+  const check = await checkManageTarget(req, req.params.id).catch(e => ({ error: { code: 500, message: e.message } }));
+  if (check.error) {
+    return res.status(check.error.code).json({ status: 'error', message: check.error.message });
+  }
+
   const connection = await pool.getConnection();
   try {
     const { id } = req.params;
@@ -265,8 +308,8 @@ export const approveUser = async (req, res) => {
 
     try {
       await connection.query(
-        'UPDATE shops SET status = ? WHERE user_id = ? OR id = ?',
-        ['active', id, id]
+        'UPDATE shops SET status = ? WHERE user_id = ?',
+        ['active', id]
       );
     } catch (e) {}
 
@@ -299,6 +342,11 @@ export const approveUser = async (req, res) => {
  * PATCH /api/users/:id/reject
  */
 export const rejectUser = async (req, res) => {
+  const check = await checkManageTarget(req, req.params.id).catch(e => ({ error: { code: 500, message: e.message } }));
+  if (check.error) {
+    return res.status(check.error.code).json({ status: 'error', message: check.error.message });
+  }
+
   const connection = await pool.getConnection();
   try {
     const { id } = req.params;
@@ -324,8 +372,8 @@ export const rejectUser = async (req, res) => {
 
     try {
       await connection.query(
-        'UPDATE shops SET status = ? WHERE user_id = ? OR id = ?',
-        ['rejected', id, id]
+        'UPDATE shops SET status = ? WHERE user_id = ?',
+        ['rejected', id]
       );
     } catch (e) {}
 
@@ -358,6 +406,11 @@ export const rejectUser = async (req, res) => {
  * DELETE /api/users/:id
  */
 export const deleteUser = async (req, res) => {
+  const check = await checkManageTarget(req, req.params.id).catch(e => ({ error: { code: 500, message: e.message } }));
+  if (check.error) {
+    return res.status(check.error.code).json({ status: 'error', message: check.error.message });
+  }
+
   const connection = await pool.getConnection();
   try {
     const { id } = req.params;

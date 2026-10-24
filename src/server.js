@@ -39,7 +39,16 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // Serve static uploaded documents
-app.use('/uploads', express.static(uploadsDir));
+// Security: browser ko content-type sniff na karne dein, aur script-capable files ko download hi karayein (stored XSS se bachav)
+const UNSAFE_INLINE_EXT = ['.html', '.htm', '.xhtml', '.svg', '.xml', '.js', '.mjs'];
+app.use('/uploads', express.static(uploadsDir, {
+  setHeaders: (res, filePath) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (UNSAFE_INLINE_EXT.includes(path.extname(filePath).toLowerCase())) {
+      res.setHeader('Content-Disposition', 'attachment');
+    }
+  }
+}));
 
 // Health Check API
 app.get('/api/health', (req, res) => {
@@ -73,6 +82,11 @@ app.use((err, req, res, next) => {
     status: 'error',
     message: err.message || 'Internal Server Error'
   });
+});
+
+// Process-level safety net: kisi async handler ka unhandled rejection poore server ko crash na kare
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled Promise Rejection:', reason);
 });
 
 // Start Server

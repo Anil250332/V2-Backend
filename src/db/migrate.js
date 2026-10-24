@@ -22,13 +22,17 @@ async function runMigration() {
   });
 
   try {
+    const dbName = process.env.DB_NAME || 'v2online_portal';
+    await connection.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`);
+    await connection.query(`USE \`${dbName}\`;`);
+
     const schemaPath = path.join(__dirname, 'schema.sql');
     const sql = fs.readFileSync(schemaPath, 'utf8');
 
-    console.log('📦 Executing schema.sql script...');
+    console.log(`📦 Executing schema.sql script on database '${dbName}'...`);
     await connection.query(sql);
 
-    console.log('✅ Database and all 12 tables created / migrated successfully!');
+    console.log('✅ Database and all tables created / migrated successfully!');
   } catch (error) {
     console.error('❌ Migration failed:', error.message);
   } finally {

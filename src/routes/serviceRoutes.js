@@ -23,7 +23,7 @@ router.post('/upload-icon', authenticateToken, authorizeRoles('super_admin', 'su
 
 // Price Change Request Endpoints
 router.post('/price-requests', authenticateToken, authorizeRoles('operator'), createPriceRequest);
-router.get('/price-requests', authenticateToken, getPriceRequests);
+router.get('/price-requests', authenticateToken, authorizeRoles('operator', 'super_admin', 'sub_admin', 'manager'), getPriceRequests);
 router.patch('/price-requests/:id/review', authenticateToken, authorizeRoles('super_admin', 'sub_admin', 'manager'), reviewPriceRequest);
 
 // Read Endpoints (Protected: Authenticated Users)

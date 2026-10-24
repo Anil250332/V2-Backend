@@ -27,27 +27,22 @@ CREATE TABLE IF NOT EXISTS users (
     INDEX idx_user_mobile (mobile)
 );
 
--- 2. Service Categories
-CREATE TABLE IF NOT EXISTS service_categories (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    name VARCHAR(100) NOT NULL,
-    icon VARCHAR(100) NULL,
-    display_order INT DEFAULT 0,
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- 3. Services
+-- 2. Services
 CREATE TABLE IF NOT EXISTS services (
     id INT PRIMARY KEY AUTO_INCREMENT,
-    category_id INT NOT NULL,
     name VARCHAR(150) NOT NULL,
     code VARCHAR(50) UNIQUE NOT NULL,
     description TEXT NULL,
+    icon_url VARCHAR(500) NULL,
+    has_sub_services BOOLEAN DEFAULT FALSE,
+    fee DECIMAL(10,2) DEFAULT 0.00,
+    admin_commission_percentage DECIMAL(5,2) DEFAULT 0.00,
+    form_schema JSON NULL,
+    required_docs JSON NULL,
+    operator_assignment_mode ENUM('single','area_wise','ward_wise') DEFAULT 'single',
     display_order INT DEFAULT 0,
     is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (category_id) REFERENCES service_categories(id) ON DELETE CASCADE
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- 4. Sub-Services & Dynamic Form Configurations
@@ -60,6 +55,10 @@ CREATE TABLE IF NOT EXISTS sub_services (
     operator_share DECIMAL(10,2) NOT NULL,
     distributor_share DECIMAL(10,2) DEFAULT 0.00,
     admin_profit DECIMAL(10,2) NOT NULL,
+    fee DECIMAL(10,2) DEFAULT 0.00,
+    admin_commission_percentage DECIMAL(5,2) DEFAULT 0.00,
+    icon_url VARCHAR(500) NULL,
+    operator_assignment_mode ENUM('single','area_wise','ward_wise') DEFAULT 'single',
     form_schema JSON NOT NULL,
     required_docs JSON NOT NULL,
     output_type ENUM('file', 'text', 'both', 'status_only') DEFAULT 'file',
@@ -81,6 +80,8 @@ CREATE TABLE IF NOT EXISTS operator_assignments (
     district VARCHAR(100) NOT NULL,
     tehsil VARCHAR(100) NULL,
     ward_no VARCHAR(50) NULL,
+    area_label VARCHAR(150) NULL,
+    custom_fee DECIMAL(10,2) NULL,
     is_active BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (operator_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -128,7 +129,7 @@ CREATE TABLE IF NOT EXISTS application_documents (
     doc_label VARCHAR(100) NOT NULL,
     file_name VARCHAR(255) NOT NULL,
     file_path VARCHAR(500) NOT NULL,
-    mime_type VARCHAR(50) NOT NULL,
+    mime_type VARCHAR(150) NOT NULL,
     file_size_kb INT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE
@@ -271,3 +272,10 @@ CREATE TABLE IF NOT EXISTS operator_price_requests (
     FOREIGN KEY (assignment_id) REFERENCES operator_assignments(id) ON DELETE SET NULL,
     FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL
 );
+
+-- 15. System Settings Table (Helpline Number & Support Email)
+CREATE TABLE IF NOT EXISTS system_settings (
+    setting_key VARCHAR(50) PRIMARY KEY,
+    setting_value TEXT NOT NULL
+);
+

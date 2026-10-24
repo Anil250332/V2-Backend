@@ -39,13 +39,14 @@ async function main() {
     'applications',
     'complaints',
     'operator_assignments',
+    'operator_price_requests',
     'sub_services',
     'services',
-    'service_categories',
     'transactions',
     'withdrawal_requests',
     'user_requests',
     'shops',
+    'system_settings',
     'wallets',
     'users'
   ];
@@ -67,7 +68,7 @@ async function main() {
   // ============================================================
   console.log('👤 Creating 1 user per panel...');
 
-  const passwordHash = await bcrypt.hash('Test@1234', 10);
+  const passwordHash = await bcrypt.hash('Admin@123', 10);
 
   // 2a. Super Admin
   const adminUuid = crypto.randomUUID();
@@ -78,7 +79,7 @@ async function main() {
   );
   const adminId = adminRes.insertId;
   await conn.query('INSERT INTO wallets (user_id, balance) VALUES (?, 0.00)', [adminId]);
-  console.log(`   👑 Super Admin  — Mobile: 9999900001 | Pass: Test@1234`);
+  console.log(`   👑 Super Admin  — Mobile: 9999900001 | Pass: Admin@123`);
 
   // 2b. Manager
   const mgrUuid = crypto.randomUUID();
@@ -145,16 +146,6 @@ async function main() {
   console.log('');
 
   // ============================================================
-  // STEP 3: CREATE SERVICE CATEGORY
-  // ============================================================
-  console.log('📂 Creating service category...');
-  const [catRes] = await conn.query(
-    `INSERT INTO service_categories (name, icon, display_order, is_active) 
-     VALUES ('Citizen Services', 'FileText', 1, true)`
-  );
-  const categoryId = catRes.insertId;
-  console.log(`   ✅ Category: "Citizen Services" (ID: ${categoryId})\n`);
-
   // ============================================================
   // STEP 4: CREATE SERVICE #1 — Direct Service (Aadhaar Update)
   //         operator_assignment_mode = 'single' (1 operator for all Gwalior)
@@ -162,9 +153,9 @@ async function main() {
   console.log('📋 Creating Service #1: Aadhaar Card Update (Direct, Single Mode)...');
 
   const [svc1Res] = await conn.query(
-    `INSERT INTO services (category_id, name, code, description, display_order, is_active, icon_url, has_sub_services, fee, admin_commission_percentage, form_schema, operator_assignment_mode)
-     VALUES (?, 'Aadhaar Card Update Service', 'AADHAAR-UPD-001', 'Aadhaar card name, address & mobile update service', 1, true, NULL, false, 150.00, 20.00, ?, 'single')`,
-    [categoryId, JSON.stringify([
+    `INSERT INTO services (name, code, description, display_order, is_active, icon_url, has_sub_services, fee, admin_commission_percentage, form_schema, operator_assignment_mode)
+     VALUES ('Aadhaar Card Update Service', 'AADHAAR-UPD-001', 'Aadhaar card name, address & mobile update service', 1, true, NULL, false, 150.00, 20.00, ?, 'single')`,
+    [JSON.stringify([
       { id: 'f1', type: 'text', label: 'Applicant Full Name', placeholder: 'Enter your full name', required: true, docUploader: 'shop' },
       { id: 'f2', type: 'number', label: 'Aadhaar Number (12 digits)', placeholder: '123456789012', required: true, docUploader: 'shop' },
       { id: 'f3', type: 'text', label: 'Father / Husband Name', placeholder: 'Enter father or husband name', required: true, docUploader: 'shop' },
@@ -194,9 +185,8 @@ async function main() {
   console.log('📋 Creating Service #2: PAN Card Services (Sub-Services, Area-Wise Mode)...');
 
   const [svc2Res] = await conn.query(
-    `INSERT INTO services (category_id, name, code, description, display_order, is_active, icon_url, has_sub_services, fee, admin_commission_percentage, form_schema, operator_assignment_mode)
-     VALUES (?, 'PAN Card Services', 'PAN-SVC-001', 'New PAN Card, PAN Correction, PAN Reprint', 2, true, NULL, true, 0.00, 0.00, NULL, 'area_wise')`,
-    [categoryId]
+    `INSERT INTO services (name, code, description, display_order, is_active, icon_url, has_sub_services, fee, admin_commission_percentage, form_schema, operator_assignment_mode)
+     VALUES ('PAN Card Services', 'PAN-SVC-001', 'New PAN Card, PAN Correction, PAN Reprint', 2, true, NULL, true, 0.00, 0.00, NULL, 'area_wise')`
   );
   const service2Id = svc2Res.insertId;
 
@@ -322,13 +312,25 @@ async function main() {
   console.log(`   🔗 Amit Operator  → "PAN Correction"      (WARD_WISE — Ward #1)\n`);
 
   // ============================================================
+  // STEP 7: SEED SYSTEM SETTINGS (Helpline & Support)
+  // ============================================================
+  console.log('⚙️  Seeding System Settings...');
+  await conn.query(
+    `INSERT INTO system_settings (setting_key, setting_value) VALUES
+     ('helpline_number', '+91 0755 2700800'),
+     ('support_email', 'distributor-help@mponline.gov.in')
+     ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)`
+  );
+  console.log('   ✅ System settings configured.\n');
+
+  // ============================================================
   // DONE!
   // ============================================================
   console.log('═══════════════════════════════════════════════════════');
   console.log('✅ DATABASE RESET & SEED COMPLETE!');
   console.log('═══════════════════════════════════════════════════════');
   console.log('');
-  console.log('📱 All Logins — Password: Test@1234');
+  console.log('📱 All Logins — Password: Admin@123');
   console.log('   👑 Admin       →  9999900001');
   console.log('   💼 Manager     →  9999900002');
   console.log('   🏬 Distributor →  9999900003');

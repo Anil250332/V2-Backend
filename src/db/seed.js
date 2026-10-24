@@ -42,20 +42,7 @@ async function seedDatabase() {
       console.log('ℹ️ Super Admin account already exists.');
     }
 
-    // 2. Seed Initial Service Categories if empty
-    const [categories] = await connection.query('SELECT id FROM service_categories LIMIT 1');
-    if (categories.length === 0) {
-      console.log('📦 Seeding default service categories...');
-      await connection.query(`
-        INSERT INTO service_categories (name, icon, display_order, is_active) VALUES
-        ('Samagra ID Services', 'id-card', 1, true),
-        ('MP e-District Services', 'file-text', 2, true),
-        ('Sambal Card Services', 'award', 3, true),
-        ('MP Ration Card Services', 'shopping-bag', 4, true),
-        ('Ayushman Bharat Services', 'heart-pulse', 5, true);
-      `);
-      console.log('✅ Service categories seeded!');
-    }
+
 
     console.log('\n🎉 Seed completed successfully!');
   } catch (error) {

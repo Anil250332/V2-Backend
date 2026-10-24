@@ -37,9 +37,19 @@ const storage = multer.diskStorage({
   }
 });
 
+// Script / executable type files block (documents & certificates ke liye inki zarurat nahi)
+const BLOCKED_UPLOAD_EXT = ['.html', '.htm', '.xhtml', '.svg', '.xml', '.js', '.mjs', '.php', '.exe', '.bat', '.cmd', '.sh', '.msi', '.jar'];
+
 const upload = multer({
   storage,
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB per file
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB per file
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    if (BLOCKED_UPLOAD_EXT.includes(ext)) {
+      return cb(new Error(`File type "${ext}" allowed nahi hai. Kripya PDF / Image / Document upload karein.`));
+    }
+    cb(null, true);
+  }
 });
 
 const router = express.Router();

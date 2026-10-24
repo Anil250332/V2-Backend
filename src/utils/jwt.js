@@ -3,7 +3,11 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const JWT_SECRET = process.env.JWT_SECRET || 'v2online_jwt_super_secret_key_2026_change_in_production';
+// Security: hardcoded fallback secret nahi — bina JWT_SECRET ke koi bhi fake admin token bana sakta tha
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error('JWT_SECRET environment variable is not set. Kripya backend/.env (local) ya server env (Render) me JWT_SECRET set karein.');
+}
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '24h';
 
 export const generateToken = (user) => {

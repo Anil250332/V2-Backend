@@ -12,13 +12,13 @@ import { authenticateToken, authorizeRoles } from '../middlewares/authMiddleware
 const router = express.Router();
 
 // Read & Self-Registration
-router.get('/', authenticateToken, getShops);
-router.post('/', authenticateToken, addShop);
+router.get('/', authenticateToken, authorizeRoles('super_admin', 'sub_admin', 'manager', 'distributor'), getShops);
+router.post('/', authenticateToken, authorizeRoles('super_admin', 'sub_admin', 'manager', 'distributor'), addShop);
 
-// Shop Approval & Administrative Management (Admin/Manager Only)
+// Shop Approval & Administrative Management (Admin / Manager only)
 router.patch('/:id/approve', authenticateToken, authorizeRoles('super_admin', 'sub_admin', 'manager'), approveShop);
 router.patch('/:id/reject', authenticateToken, authorizeRoles('super_admin', 'sub_admin', 'manager'), rejectShop);
-router.post('/:id/request-delete', authenticateToken, requestDeleteShop);
+router.post('/:id/request-delete', authenticateToken, authorizeRoles('super_admin', 'sub_admin', 'manager', 'distributor'), requestDeleteShop);
 router.patch('/:id/approve-deletion', authenticateToken, authorizeRoles('super_admin', 'sub_admin'), approveDeletion);
 
 export default router;

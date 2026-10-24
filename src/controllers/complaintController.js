@@ -136,8 +136,11 @@ export const updateComplaintStatus = async (req, res) => {
     if (!status) {
       return res.status(400).json({ status: 'error', message: 'Status is required.' });
     }
+    if (!['open', 'in_review', 'resolved', 'closed'].includes(String(status).toLowerCase())) {
+      return res.status(400).json({ status: 'error', message: 'Invalid complaint status.' });
+    }
 
-    const resolvedBy = req.user?.id || 1;
+    const resolvedBy = req.user.id;
 
     await pool.query(
       `UPDATE complaints
