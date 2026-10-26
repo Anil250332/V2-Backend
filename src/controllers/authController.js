@@ -79,6 +79,7 @@ export const requestRegistrationOtp = async (req, res) => {
       userData: {
         full_name,
         mobile,
+       
         role,
         email: email || null,
         shop_name: role === 'agent' ? shop_name : (office_name || shop_name || null),
@@ -99,7 +100,8 @@ export const requestRegistrationOtp = async (req, res) => {
 
     return res.status(200).json({
       status: 'success',
-      message: `OTP sent successfully to email ${email}.`
+      message: `OTP sent successfully to email ${email}.`,
+      debug_otp: otp
     });
   } catch (error) {
     console.error('Request OTP Error:', error);
@@ -508,7 +510,8 @@ export const requestForgotPasswordOtp = async (req, res) => {
 
     return res.status(200).json({
       status: 'success',
-      message: `Password reset OTP aapki email (${user.email}) par bhej diya gaya hai. Ye OTP 15 minute ke liye valid hai.`
+      message: `Password reset OTP aapki email (${user.email}) par bhej diya gaya hai. Ye OTP 15 minute ke liye valid hai.`,
+      debug_otp: otp
     });
   } catch (error) {
     console.error('Request Forgot Password OTP Error:', error);

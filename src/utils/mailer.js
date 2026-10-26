@@ -53,6 +53,36 @@ export const sendEmail = async ({ to, subject, html, text }) => {
         ? process.env.EMAIL_FROM 
         : defaultFrom);
 
+  // Check if Resend HTTPS API (Port 443) is configured (Recommended for Render free tier where SMTP ports 25, 465, 587 are blocked)
+  if (process.env.RESEND_API_KEY) {
+    try {
+      const resendFrom = process.env.RESEND_FROM || 'onboarding@resend.dev';
+      const apiRes = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.RESEND_API_KEY.trim()}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          from: resendFrom.includes('<') ? resendFrom : `"V2Online Portal" <${resendFrom}>`,
+          to: [to],
+          subject,
+          html,
+          text: text || ''
+        })
+      });
+      const data = await apiRes.json();
+      if (apiRes.ok) {
+        console.log(`📧 [Mailer:Resend] Email successfully sent to ${to} | ID: ${data.id}`);
+        return true;
+      } else {
+        console.warn(`⚠️ [Mailer:Resend] API returned error:`, data.message || data);
+      }
+    } catch (resendErr) {
+      console.warn(`⚠️ [Mailer:Resend] Connection error:`, resendErr.message);
+    }
+  }
+
   // Check if SMTP credentials are configured
   if (!user || !pass) {
     console.log(`\n================ EMAIL NOTIFICATION (DEV SIMULATION) ================`);
