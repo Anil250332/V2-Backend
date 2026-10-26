@@ -5,7 +5,8 @@ import {
   approveShop,
   rejectShop,
   requestDeleteShop,
-  approveDeletion
+  approveDeletion,
+  deleteShop
 } from '../controllers/shopController.js';
 import { authenticateToken, authorizeRoles } from '../middlewares/authMiddleware.js';
 
@@ -20,5 +21,6 @@ router.patch('/:id/approve', authenticateToken, authorizeRoles('super_admin', 's
 router.patch('/:id/reject', authenticateToken, authorizeRoles('super_admin', 'sub_admin', 'manager'), rejectShop);
 router.post('/:id/request-delete', authenticateToken, authorizeRoles('super_admin', 'sub_admin', 'manager', 'distributor'), requestDeleteShop);
 router.patch('/:id/approve-deletion', authenticateToken, authorizeRoles('super_admin', 'sub_admin'), approveDeletion);
+router.delete('/:id', authenticateToken, authorizeRoles('super_admin', 'sub_admin'), deleteShop);
 
 export default router;

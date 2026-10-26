@@ -417,9 +417,43 @@ export const deleteUser = async (req, res) => {
 
     await connection.beginTransaction();
 
-    // Delete wallet first (FK constraint)
+    // 1. Applications foreign keys
+    await connection.query('UPDATE applications SET operator_id = NULL WHERE operator_id = ?', [id]);
+    await connection.query('UPDATE applications SET distributor_id = NULL WHERE distributor_id = ?', [id]);
+    await connection.query(
+      'DELETE FROM application_documents WHERE application_id IN (SELECT id FROM applications WHERE agent_id = ?)',
+      [id]
+    );
+    await connection.query('DELETE FROM applications WHERE agent_id = ?', [id]);
+
+    // 2. Operator assignments & price requests
+    await connection.query('DELETE FROM operator_assignments WHERE operator_id = ?', [id]);
+    await connection.query('UPDATE operator_price_requests SET reviewed_by = NULL WHERE reviewed_by = ?', [id]);
+    await connection.query('DELETE FROM operator_price_requests WHERE operator_id = ?', [id]);
+
+    // 3. Complaints
+    await connection.query('UPDATE complaints SET resolved_by = NULL WHERE resolved_by = ?', [id]);
+    await connection.query('DELETE FROM complaints WHERE raised_by = ?', [id]);
+
+    // 4. User requests
+    await connection.query('UPDATE user_requests SET reviewed_by = NULL WHERE reviewed_by = ?', [id]);
+    await connection.query('DELETE FROM user_requests WHERE target_user_id = ? OR requested_by = ?', [id, id]);
+
+    // 5. Withdrawal requests
+    await connection.query('UPDATE withdrawal_requests SET verified_by = NULL WHERE verified_by = ?', [id]);
+    await connection.query('UPDATE withdrawal_requests SET processed_by = NULL WHERE processed_by = ?', [id]);
+    await connection.query('DELETE FROM withdrawal_requests WHERE user_id = ?', [id]);
+
+    // 6. Wallets & Transactions
+    await connection.query('DELETE FROM transactions WHERE user_id = ?', [id]);
     await connection.query('DELETE FROM wallets WHERE user_id = ?', [id]);
-    // Delete user (cascades to other FKs)
+
+    // 7. Shops linking
+    await connection.query('DELETE FROM shops WHERE user_id = ?', [id]);
+    await connection.query('UPDATE shops SET distributor_id = NULL WHERE distributor_id = ?', [id]);
+    await connection.query('UPDATE users SET distributor_id = NULL WHERE distributor_id = ?', [id]);
+
+    // 8. Delete user record
     await connection.query('DELETE FROM users WHERE id = ?', [id]);
 
     await connection.commit();

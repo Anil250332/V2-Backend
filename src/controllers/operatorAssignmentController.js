@@ -125,7 +125,7 @@ export const createAssignment = async (req, res) => {
 
     // Check operator exists
     const [opRows] = await pool.query(
-      'SELECT id, full_name FROM users WHERE id = ? AND role = "operator"',
+      "SELECT id, full_name FROM users WHERE id = ? AND role = 'operator'",
       [operatorId]
     );
     if (opRows.length === 0) {

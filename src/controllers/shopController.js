@@ -42,13 +42,13 @@ export const getShops = async (req, res) => {
 
     if (status) {
       if (status === 'active') {
-        query += ' AND u.is_active = true AND u.approval_status = "approved" AND ur.id IS NULL';
+        query += " AND u.is_active = true AND u.approval_status = 'approved' AND ur.id IS NULL";
       } else if (status === 'pending') {
-        query += ' AND u.approval_status = "pending"';
+        query += " AND u.approval_status = 'pending'";
       } else if (status === 'delete_requested') {
-        query += ' AND ur.id IS NOT NULL AND ur.status = "pending"';
+        query += " AND ur.id IS NOT NULL AND ur.status = 'pending'";
       } else if (status === 'inactive') {
-        query += ' AND (u.is_active = false OR u.approval_status = "rejected")';
+        query += " AND (u.is_active = false OR u.approval_status = 'rejected')";
       }
     }
 
@@ -349,13 +349,22 @@ export const approveDeletion = async (req, res) => {
       return res.status(404).json({ status: 'error', message: 'Shop not found.' });
     }
 
-    // Deactivate shop user
-    await connection.query('UPDATE users SET is_active = false, approval_status = "rejected" WHERE id = ?', [id]);
-
-    // Mark request approved
+    // Deactivate shop user safely with parameters (avoid SQL double quote identifier errors)
     await connection.query(
-      'UPDATE user_requests SET status = "approved", reviewed_by = ?, reviewed_at = NOW() WHERE target_user_id = ? AND request_type = "delete_agent" AND status = "pending"',
-      [reviewedBy, id]
+      'UPDATE users SET is_active = false, approval_status = ? WHERE id = ?',
+      ['rejected', id]
+    );
+
+    // Update shops table status as well
+    await connection.query(
+      'UPDATE shops SET status = ? WHERE user_id = ?',
+      ['rejected', id]
+    );
+
+    // Mark request approved with parameters
+    await connection.query(
+      'UPDATE user_requests SET status = ?, reviewed_by = ?, reviewed_at = NOW() WHERE target_user_id = ? AND request_type = ? AND status = ?',
+      ['approved', reviewedBy, id, 'delete_agent', 'pending']
     );
 
     await connection.commit();
@@ -364,6 +373,81 @@ export const approveDeletion = async (req, res) => {
   } catch (error) {
     await connection.rollback();
     console.error('Approve Deletion Error:', error);
+    return res.status(500).json({ status: 'error', message: error.message });
+  } finally {
+    connection.release();
+  }
+};
+
+/**
+ * 7. Permanently Delete Shop (Admin)
+ * DELETE /api/shops/:id
+ */
+export const deleteShop = async (req, res) => {
+  const connection = await pool.getConnection();
+  try {
+    const { id } = req.params;
+
+    await connection.beginTransaction();
+
+    // 1. Identify shop and user (agent)
+    const [shops] = await connection.query(
+      'SELECT s.id as shop_id, s.user_id FROM shops s WHERE s.id = ? OR s.user_id = ?',
+      [id, id]
+    );
+
+    let agentId = null;
+    let shopId = null;
+
+    if (shops.length > 0) {
+      shopId = shops[0].shop_id;
+      agentId = shops[0].user_id;
+    } else {
+      const [agents] = await connection.query("SELECT id FROM users WHERE id = ? AND role = 'agent'", [id]);
+      if (agents.length === 0) {
+        await connection.rollback();
+        return res.status(404).json({ status: 'error', message: 'Shop not found.' });
+      }
+      agentId = agents[0].id;
+    }
+
+    // 2. Cascade cleanup all foreign keys cleanly
+    if (agentId) {
+      // Application documents and applications
+      await connection.query(
+        'DELETE FROM application_documents WHERE application_id IN (SELECT id FROM applications WHERE agent_id = ?)',
+        [agentId]
+      );
+      await connection.query('DELETE FROM applications WHERE agent_id = ?', [agentId]);
+
+      // Complaints raised by agent
+      await connection.query('DELETE FROM complaints WHERE raised_by = ?', [agentId]);
+
+      // User requests for or by agent
+      await connection.query('DELETE FROM user_requests WHERE target_user_id = ? OR requested_by = ?', [agentId, agentId]);
+
+      // Transactions & withdrawal requests
+      await connection.query('DELETE FROM transactions WHERE user_id = ?', [agentId]);
+      await connection.query('DELETE FROM withdrawal_requests WHERE user_id = ?', [agentId]);
+
+      // Wallet
+      await connection.query('DELETE FROM wallets WHERE user_id = ?', [agentId]);
+
+      // Shop entry
+      await connection.query('DELETE FROM shops WHERE user_id = ? OR id = ?', [agentId, shopId || 0]);
+
+      // User entry
+      await connection.query('DELETE FROM users WHERE id = ?', [agentId]);
+    } else if (shopId) {
+      await connection.query('DELETE FROM shops WHERE id = ?', [shopId]);
+    }
+
+    await connection.commit();
+
+    return res.status(200).json({ status: 'success', message: 'Shop and associated account deleted permanently.' });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Delete Shop Error:', error);
     return res.status(500).json({ status: 'error', message: error.message });
   } finally {
     connection.release();
