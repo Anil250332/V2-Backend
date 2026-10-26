@@ -22,31 +22,35 @@ router.post('/forgot-password-otp', requestForgotPasswordOtp);
 router.post('/verify-reset-otp', verifyForgotPasswordOtp);
 router.post('/reset-password', resetPasswordWithOtp);
 
-// Diagnostic test endpoint for verifying live email delivery
+// Diagnostic test endpoint for verifying live email delivery via Resend API
 router.get('/test-email', async (req, res) => {
-  const targetEmail = req.query.to || process.env.SMTP_USER;
+  const targetEmail = req.query.to || process.env.ADMIN_EMAIL || 'raj008chaurasia@gmail.com';
   try {
-    const { getTransporter } = await import('../utils/mailer.js');
-    const transporter = getTransporter();
-    await transporter.verify();
-    const info = await transporter.sendMail({
-      from: `"V2Online MP Portal" <${process.env.SMTP_USER}>`,
+    const { sendEmail } = await import('../utils/mailer.js');
+    const result = await sendEmail({
       to: targetEmail,
-      subject: '🧪 [V2Online Test] SMTP Diagnostic Email',
-      text: 'This is a test email sent from the live Render backend to verify SMTP configuration.'
+      subject: '🧪 [V2Online Test] Resend API Diagnostic Email',
+      text: 'This is a test email sent from the live Render backend using Resend HTTPS API (Port 443) to verify email delivery.',
+      html: '<p>This is a test email sent from the live Render backend using <strong>Resend HTTPS API (Port 443)</strong> to verify email delivery.</p>'
     });
-    return res.status(200).json({
-      status: 'success',
-      message: `SMTP is working properly and test email was sent to ${targetEmail}!`,
-      messageId: info.messageId,
-      accepted: info.accepted
-    });
+
+    if (result.success) {
+      return res.status(200).json({
+        status: 'success',
+        message: `Resend API test email sent successfully to ${targetEmail}!`,
+        messageId: result.messageId
+      });
+    } else {
+      return res.status(500).json({
+        status: 'error',
+        message: 'Resend email delivery failed: ' + result.error,
+        details: result
+      });
+    }
   } catch (err) {
     return res.status(500).json({
       status: 'error',
-      message: 'SMTP failed: ' + err.message,
-      code: err.code,
-      command: err.command
+      message: 'Email test exception: ' + err.message
     });
   }
 });

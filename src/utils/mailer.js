@@ -1,123 +1,112 @@
-import dns from 'dns';
-try {
-  dns.setDefaultResultOrder('ipv4first');
-} catch (e) {}
-
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import pool from '../config/db.js';
 
-/**
- * Lazy creation of Nodemailer Transporter
- */
-export const getTransporter = () => {
-  const host = (process.env.SMTP_HOST || 'smtp.gmail.com').trim();
-  const user = (process.env.SMTP_USER || '').trim();
-  const pass = (process.env.SMTP_PASS || '').trim();
-  const port = parseInt((process.env.SMTP_PORT || '587').trim(), 10);
-  const isSecure = port === 465;
+let resendClient = null;
 
-  return nodemailer.createTransport({
-    host: (host.includes('gmail.com') || user.includes('gmail.com')) ? 'smtp.gmail.com' : host,
-    port: port || 587,
-    secure: isSecure,
-    auth: user && pass ? { user, pass } : undefined,
-    family: 4, // CRITICAL: Force IPv4 to prevent Render IPv6 network unreachable errors
-    tls: {
-      rejectUnauthorized: false
-    },
-    connectionTimeout: 20000,
-    socketTimeout: 20000,
-    greetingTimeout: 20000
-  });
+/**
+ * Returns or initializes singleton Resend client
+ */
+export const getResendClient = () => {
+  const apiKey = (process.env.RESEND_API_KEY || '').trim();
+  if (!apiKey) return null;
+  if (!resendClient || resendClient._apiKey !== apiKey) {
+    resendClient = new Resend(apiKey);
+    resendClient._apiKey = apiKey;
+  }
+  return resendClient;
 };
 
 /**
- * Core sendEmail helper with non-blocking error catching and strict timeouts
+ * Backwards compatibility helper: In case any older diagnostic module imports getTransporter
+ */
+export const getTransporter = () => {
+  return {
+    verify: async () => true,
+    sendMail: async (opts) => {
+      const res = await sendEmail(opts);
+      return { messageId: res.messageId || 'resend-msg-id', accepted: [opts.to] };
+    }
+  };
+};
+
+/**
+ * Core sendEmail helper powered by Resend HTTPS API (Port 443)
+ * Completely eliminates Render Free Tier SMTP (port 25, 465, 587) timeouts.
  */
 export const sendEmail = async ({ to, subject, html, text }) => {
   if (!to) {
     console.log('ℹ️ [Mailer] No recipient email provided. Skipping email dispatch.');
-    return false;
+    return { success: false, error: 'Recipient email is required.' };
   }
 
-  const user = (process.env.SMTP_USER || '').trim();
-  const pass = (process.env.SMTP_PASS || '').trim();
+  const apiKey = (process.env.RESEND_API_KEY || '').trim();
 
-  // For Gmail, From header MUST match the authenticated Gmail account user to avoid Gmail 550/554 SendAsDenied rejection
-  const isGmail = (process.env.SMTP_HOST || '').includes('gmail.com') || user.includes('gmail.com');
-  const defaultFrom = user ? `"V2Online MP Portal" <${user}>` : '"V2Online MP Portal" <no-reply@v2onlineportal.com>';
-  
-  const from = (isGmail && user) 
-    ? `"V2Online MP Portal" <${user}>`
-    : ((process.env.EMAIL_FROM && !process.env.EMAIL_FROM.includes('no-reply@v2onlineportal.com')) 
-        ? process.env.EMAIL_FROM 
-        : defaultFrom);
-
-  // Check if Resend HTTPS API (Port 443) is configured (Recommended for Render free tier where SMTP ports 25, 465, 587 are blocked)
-  if (process.env.RESEND_API_KEY) {
-    try {
-      const resendFrom = process.env.RESEND_FROM || 'onboarding@resend.dev';
-      const apiRes = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${process.env.RESEND_API_KEY.trim()}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          from: resendFrom.includes('<') ? resendFrom : `"V2Online Portal" <${resendFrom}>`,
-          to: [to],
-          subject,
-          html,
-          text: text || ''
-        })
-      });
-      const data = await apiRes.json();
-      if (apiRes.ok) {
-        console.log(`📧 [Mailer:Resend] Email successfully sent to ${to} | ID: ${data.id}`);
-        return true;
-      } else {
-        console.warn(`⚠️ [Mailer:Resend] API returned error:`, data.message || data);
-      }
-    } catch (resendErr) {
-      console.warn(`⚠️ [Mailer:Resend] Connection error:`, resendErr.message);
-    }
-  }
-
-  // Check if SMTP credentials are configured
-  if (!user || !pass) {
+  // If no API key is provided, log warning for dev environment
+  if (!apiKey) {
+    console.warn('⚠️ [Mailer] RESEND_API_KEY is not configured in environment variables.');
     console.log(`\n================ EMAIL NOTIFICATION (DEV SIMULATION) ================`);
     console.log(`To: ${to}`);
-    console.log(`From: ${from}`);
     console.log(`Subject: ${subject}`);
     console.log(`Body (Text): ${text || 'HTML Content Attached'}`);
     console.log(`---------------------------------------------------------------------`);
-    console.log(`💡 Note: To send real emails, configure SMTP_USER & SMTP_PASS in backend/.env`);
+    console.log(`💡 Note: To send live emails, configure RESEND_API_KEY in your environment.`);
     console.log(`=====================================================================\n`);
-    return true;
+    return {
+      success: false,
+      error: 'RESEND_API_KEY is not configured. Please configure your Resend API key.'
+    };
+  }
+
+  // Format sender address
+  const senderEmail = (process.env.RESEND_FROM || process.env.EMAIL_FROM || 'onboarding@resend.dev').trim();
+  const from = senderEmail.includes('<') ? senderEmail : `"V2Online MP Portal" <${senderEmail}>`;
+
+  // Parse recipients (Resend accepts array of strings or single string)
+  const recipientList = Array.isArray(to) 
+    ? to.map(e => String(e).trim()).filter(Boolean)
+    : String(to).split(',').map(s => s.trim()).filter(Boolean);
+
+  if (recipientList.length === 0) {
+    return { success: false, error: 'No valid recipient email address provided.' };
   }
 
   try {
-    const transporter = getTransporter();
-    
-    // Wrap email dispatch in a 25-second timeout race guard (realistic for cloud network latency)
-    const emailPromise = transporter.sendMail({
+    const resend = getResendClient();
+    const { data, error } = await resend.emails.send({
       from,
-      to,
+      to: recipientList,
       subject,
-      text: text || '',
-      html
+      html,
+      text: text || ''
     });
 
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('SMTP Connection Timeout (25s)')), 25000)
-    );
+    if (error) {
+      if (error.statusCode === 403 && error.message?.includes('testing emails to your own email address')) {
+        console.error(`❌ [Mailer Error: 403 Forbidden] Resend Sandbox Limitation: Cannot send to ${to}. With onboarding@resend.dev, emails can only be sent to the Resend account owner (raj008chaurasia@gmail.com). To send to all users, verify a domain at resend.com/domains.`);
+      } else if (error.statusCode === 401) {
+        console.error(`❌ [Mailer Error: 401 Unauthorized] Invalid RESEND_API_KEY. Check your Render environment settings.`);
+      } else if (error.statusCode === 429) {
+        console.error(`❌ [Mailer Error: 429 Rate Limit] Resend rate limit exceeded. Please wait before retrying.`);
+      } else {
+        console.error(`❌ [Mailer Error] Resend API error:`, error.message || error);
+      }
+      return {
+        success: false,
+        error: error.message || 'Resend API failed to dispatch email.'
+      };
+    }
 
-    const info = await Promise.race([emailPromise, timeoutPromise]);
-    console.log(`📧 [Mailer] Email successfully sent to ${to} | MessageID: ${info.messageId}`);
-    return true;
-  } catch (error) {
-    console.error(`❌ [Mailer Error] Failed to send email to ${to}:`, error.message);
-    return false; // Return false but do not throw to prevent blocking calling endpoints
+    console.log(`📧 [Mailer:Resend] Email successfully dispatched to ${recipientList.join(', ')} | ID: ${data.id}`);
+    return {
+      success: true,
+      messageId: data.id
+    };
+  } catch (err) {
+    console.error(`❌ [Mailer Exception] Network/System error sending email:`, err.message);
+    return {
+      success: false,
+      error: err.message || 'Unexpected network error dispatching email via Resend API.'
+    };
   }
 };
 
