@@ -1,36 +1,33 @@
+import dns from 'dns';
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch (e) {}
+
 import nodemailer from 'nodemailer';
 import pool from '../config/db.js';
 
 /**
  * Lazy creation of Nodemailer Transporter
  */
-const getTransporter = () => {
+export const getTransporter = () => {
   const host = (process.env.SMTP_HOST || 'smtp.gmail.com').trim();
   const user = (process.env.SMTP_USER || '').trim();
   const pass = (process.env.SMTP_PASS || '').trim();
-
-  if (host.includes('gmail.com') || user.includes('gmail.com')) {
-    return nodemailer.createTransport({
-      service: 'gmail',
-      auth: user && pass ? { user, pass } : undefined,
-      connectionTimeout: 5000,
-      socketTimeout: 5000,
-      greetingTimeout: 5000
-    });
-  }
-
   const port = parseInt((process.env.SMTP_PORT || '587').trim(), 10);
+  const isSecure = port === 465;
+
   return nodemailer.createTransport({
-    host,
-    port,
-    secure: port === 465,
+    host: (host.includes('gmail.com') || user.includes('gmail.com')) ? 'smtp.gmail.com' : host,
+    port: port || 587,
+    secure: isSecure,
     auth: user && pass ? { user, pass } : undefined,
+    family: 4, // CRITICAL: Force IPv4 to prevent Render IPv6 network unreachable errors
     tls: {
       rejectUnauthorized: false
     },
-    connectionTimeout: 5000,
-    socketTimeout: 5000,
-    greetingTimeout: 5000
+    connectionTimeout: 20000,
+    socketTimeout: 20000,
+    greetingTimeout: 20000
   });
 };
 
@@ -72,7 +69,7 @@ export const sendEmail = async ({ to, subject, html, text }) => {
   try {
     const transporter = getTransporter();
     
-    // Wrap email dispatch in a 6-second timeout race guard
+    // Wrap email dispatch in a 25-second timeout race guard (realistic for cloud network latency)
     const emailPromise = transporter.sendMail({
       from,
       to,
@@ -82,7 +79,7 @@ export const sendEmail = async ({ to, subject, html, text }) => {
     });
 
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('SMTP Connection Timeout (6s)')), 6000)
+      setTimeout(() => reject(new Error('SMTP Connection Timeout (25s)')), 25000)
     );
 
     const info = await Promise.race([emailPromise, timeoutPromise]);
